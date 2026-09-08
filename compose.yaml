@@ -2,7 +2,7 @@ services:
   account-hub:
     build:
       context: .
-      dockerfile: backend/Dockerfile
+      dockerfile: Dockerfile
     image: account-hub:local
     restart: unless-stopped
     ports:
