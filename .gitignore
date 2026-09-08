@@ -1,0 +1,11 @@
+/backend/data/
+/backend/build/
+/backend/internal/web/dist/*
+!/backend/internal/web/dist/index.html
+/frontend/node_modules/
+/frontend/dist/
+/frontend/.vite/
+.env
+/backend/.env
+*.log
+coverage.out

@@ -1,0 +1,10 @@
+.git
+.env
+backend/.env
+backend/data
+backend/build
+backend/internal/web/dist
+frontend/node_modules
+frontend/dist
+coverage.out
+*.log

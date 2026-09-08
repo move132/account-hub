@@ -1,0 +1,13 @@
+services:
+  account-hub:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: account-hub:local
+    restart: unless-stopped
+    ports:
+      - "8500:8500"
+    environment:
+      - ADMIN_PASSWORD
+    volumes:
+      - ./backend/data:/app/data
