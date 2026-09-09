@@ -1,28 +1,28 @@
 import { useState, type FormEvent } from "react";
 import { Navigate, useNavigate } from "react-router-dom";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
-import { Button, Card, Field, Input } from "../../components/ui";
+import { Button, Card, Field, Input, useToast } from "../../components/ui";
 import { errorMessage } from "../../lib/api";
 import { useAuth } from "../../app/auth-context";
 export function LoginPage() {
   const { session, login } = useAuth();
+  const { notify } = useToast();
   const navigate = useNavigate();
   const [username, setUsername] = useState("admin");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   if (session)
     return <Navigate to="/tokens" replace />;
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    setError("");
     setLoading(true);
     try {
       await login(username, password);
+      notify("登录成功");
       navigate("/tokens");
     }
     catch (reason) {
-      setError(errorMessage(reason));
+      notify("登录失败", errorMessage(reason), "danger");
     }
     finally {
       setLoading(false);
@@ -44,8 +44,7 @@ export function LoginPage() {
         <Field label="密码">
           <Input name="password" type="password" autoComplete="off" value={password} onChange={(event) => setPassword(event.target.value)} />
         </Field>
-        {error && <p role="alert" className="rounded-lg border border-app-danger/30 bg-app-danger/10 px-3 py-2 text-sm text-app-danger">
-          {error}</p>}<Button type="submit" variant="primary" size="md" disabled={loading}>
+        <Button type="submit" variant="primary" size="md" disabled={loading}>
           {loading ? "登录中…" : "登录"}</Button>
       </form>
     </Card>
