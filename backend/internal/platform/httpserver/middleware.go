@@ -78,7 +78,11 @@ func (g *jsonGuard) Write(body []byte) (int, error) {
 }
 
 func (g *jsonGuard) flush(w http.ResponseWriter, r *http.Request) {
-	if !strings.Contains(strings.ToLower(g.header.Get("Content-Type")), "application/json") {
+	contentType := strings.ToLower(g.header.Get("Content-Type"))
+	isJSON := strings.Contains(contentType, "application/json")
+	isAttachment := g.status >= http.StatusOK && g.status < http.StatusMultipleChoices &&
+		strings.HasPrefix(strings.ToLower(g.header.Get("Content-Disposition")), "attachment;")
+	if !isJSON && !isAttachment {
 		code, message := "HTTP_ERROR", "请求失败"
 		switch g.status {
 		case http.StatusNotFound:

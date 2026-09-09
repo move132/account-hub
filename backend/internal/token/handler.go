@@ -1,10 +1,8 @@
 package token
 
 import (
-	"encoding/csv"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -14,7 +12,6 @@ import (
 	"account-hub/internal/auth"
 	"account-hub/internal/job"
 	"account-hub/internal/platform/httpserver"
-	"account-hub/internal/platform/security"
 	"account-hub/internal/platform/upstream"
 )
 
@@ -140,48 +137,56 @@ func (h *Handler) Attempts(w http.ResponseWriter, r *http.Request) {
 	httpserver.Write(w, http.StatusOK, map[string]any{"items": items}, "查询成功")
 }
 
-type importRow struct {
-	Line   int         `json:"line"`
-	Input  CreateInput `json:"input"`
-	Errors []string    `json:"errors"`
-}
-
 func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 8<<20)
-	if err := r.ParseMultipartForm(8 << 20); err != nil {
-		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_INVALID", "无法解析上传文件", nil)
+	const maxImportBytes = 8 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxImportBytes)
+	if err := r.ParseMultipartForm(maxImportBytes); err != nil {
+		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_INVALID", "无法解析导入内容", nil)
 		return
 	}
-	file, _, err := r.FormFile("file")
-	if err != nil {
-		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_FILE_REQUIRED", "请选择 CSV 文件", nil)
-		return
+	if r.MultipartForm != nil {
+		defer r.MultipartForm.RemoveAll()
 	}
-	defer file.Close()
-	rows, err := parseImport(file)
+	rows, err := readImport(r)
 	if err != nil {
 		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_INVALID", err.Error(), nil)
 		return
 	}
-	valid, invalid := 0, 0
+	if err := h.service.markImportDuplicates(r.Context(), rows); err != nil {
+		httpserver.Error(w, r, http.StatusInternalServerError, "IMPORT_CHECK_FAILED", "检查重复 Token 失败，请重试", nil)
+		return
+	}
+	valid, invalid, duplicates := 0, 0, 0
 	for _, row := range rows {
-		if len(row.Errors) == 0 {
-			valid++
-		} else {
+		if len(row.Errors) > 0 {
 			invalid++
+		} else if row.Duplicate {
+			duplicates++
+		} else {
+			valid++
 		}
 	}
 	if r.URL.Query().Get("dry_run") == "true" {
-		httpserver.Write(w, http.StatusOK, map[string]any{"rows": importPreview(rows), "total": len(rows), "valid": valid, "invalid": invalid}, "预检完成")
+		httpserver.Write(w, http.StatusOK, map[string]any{
+			"rows": importPreview(rows), "total": len(rows), "valid": valid, "invalid": invalid,
+			"duplicates": duplicates,
+		}, "预览完成")
 		return
 	}
 	if invalid > 0 {
-		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_HAS_ERRORS", "导入文件存在错误，请先修正", map[string]any{"rows": importPreview(rows), "invalid": invalid})
+		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_HAS_ERRORS", "导入内容存在错误，请先修正", map[string]any{"rows": importPreview(rows), "invalid": invalid})
 		return
 	}
-	targets := make([]job.Target, 0, len(rows))
+	if valid == 0 {
+		httpserver.Write(w, http.StatusOK, map[string]any{"job": nil, "accepted": 0, "skipped": duplicates}, "所有 Token 均已存在，已跳过")
+		return
+	}
+	targets := make([]job.Target, 0, valid)
 	for _, row := range rows {
-		targets = append(targets, job.Target{Label: row.Input.Email, Payload: row.Input})
+		if row.Duplicate {
+			continue
+		}
+		targets = append(targets, job.Target{Label: row.Input.Name, Payload: row.Input})
 	}
 	session, _ := auth.SessionFromContext(r.Context())
 	createdJob, _, err := h.jobs.Create(r.Context(), "token", "import", session.AdminID, r.URL.Path, "", job.RequestHash(rows), targets)
@@ -189,107 +194,67 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_JOB_FAILED", err.Error(), nil)
 		return
 	}
-	h.log(r, "token_import", createdJob.ID, fmt.Sprintf("创建 %d 行 Token 导入任务", len(rows)))
-	httpserver.Write(w, http.StatusAccepted, map[string]any{"job": createdJob}, "导入任务已创建")
-}
-
-func importPreview(rows []importRow) []map[string]any {
-	result := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
-		result = append(result, map[string]any{
-			"line": row.Line, "name": row.Input.Name, "email": row.Input.Email, "status": row.Input.Status,
-			"access_token_masked":  security.MaskSecret(row.Input.AccessToken),
-			"session_token_masked": security.MaskSecret(row.Input.SessionToken), "errors": row.Errors,
-		})
-	}
-	return result
-}
-
-func parseImport(reader io.Reader) ([]importRow, error) {
-	csvReader := csv.NewReader(reader)
-	csvReader.FieldsPerRecord = -1
-	header, err := csvReader.Read()
-	if err != nil {
-		return nil, errors.New("CSV 文件为空")
-	}
-	if len(header) > 0 {
-		header[0] = strings.TrimPrefix(header[0], "\ufeff")
-	}
-	want := []string{"name", "email", "access_token", "session_token", "access_expires_at", "status", "note"}
-	indexes := map[string]int{}
-	for index, value := range header {
-		indexes[strings.TrimSpace(value)] = index
-	}
-	for _, column := range want {
-		if _, found := indexes[column]; !found {
-			return nil, fmt.Errorf("CSV 缺少列: %s", column)
-		}
-	}
-	rows := make([]importRow, 0)
-	seen := map[string]int{}
-	for line := 2; ; line++ {
-		values, err := csvReader.Read()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			return nil, fmt.Errorf("第 %d 行无法解析: %w", line, err)
-		}
-		value := func(column string) string {
-			index := indexes[column]
-			if index >= len(values) {
-				return ""
-			}
-			return strings.TrimSpace(values[index])
-		}
-		input := CreateInput{Name: value("name"), Email: value("email"), AccessToken: value("access_token"), SessionToken: value("session_token"), AccessExpiresAt: value("access_expires_at"), Status: value("status"), Note: value("note")}
-		row := importRow{Line: line, Input: input, Errors: []string{}}
-		if input.AccessToken == "" {
-			row.Errors = append(row.Errors, "access_token 不能为空")
-		}
-		if first, exists := seen[input.AccessToken]; input.AccessToken != "" && exists {
-			row.Errors = append(row.Errors, fmt.Sprintf("与第 %d 行 access_token 重复", first))
-		} else if input.AccessToken != "" {
-			seen[input.AccessToken] = line
-		}
-		if input.Status != "" && input.Status != "enabled" && input.Status != "disabled" {
-			row.Errors = append(row.Errors, "status 只能是 enabled 或 disabled")
-		}
-		if err := validateLengths(input.Name, input.Email, input.AccessToken, input.SessionToken, input.Note); err != nil {
-			row.Errors = append(row.Errors, err.Error())
-		}
-		rows = append(rows, row)
-		if len(rows) > 10000 {
-			return nil, errors.New("CSV 最多允许 10000 行")
-		}
-	}
-	return rows, nil
+	h.log(r, "token_import", createdJob.ID, fmt.Sprintf("创建 %d 条 Token 导入任务，跳过 %d 条重复 Token", valid, duplicates))
+	httpserver.Write(w, http.StatusAccepted, map[string]any{
+		"job": createdJob, "accepted": valid, "skipped": duplicates,
+	}, "导入任务已创建")
 }
 
 func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
-	var builder strings.Builder
-	writer := csv.NewWriter(&builder)
-	_ = writer.Write([]string{"id", "name", "email", "status", "check_state", "access_expires_at", "note", "created_at", "updated_at"})
-	page := 1
-	total := 0
-	for {
-		items, count, err := h.service.List(r.Context(), ListFilter{Page: page, PageSize: 100, Sort: "created_at", Order: "asc"})
-		if err != nil {
-			httpserver.Error(w, r, http.StatusInternalServerError, "TOKEN_EXPORT_FAILED", "导出失败", nil)
-			return
-		}
-		for _, item := range items {
-			_ = writer.Write([]string{item.ID, item.Name, item.Email, item.Status, item.CheckState, item.AccessExpiresAt, item.Note, strconv.FormatInt(item.CreatedAt, 10), strconv.FormatInt(item.UpdatedAt, 10)})
-		}
-		total = count
-		if page*100 >= count {
-			break
-		}
-		page++
+	var request struct {
+		IDs []string `json:"ids"`
 	}
-	writer.Flush()
-	h.log(r, "token_export", "", fmt.Sprintf("导出 %d 个 Token 的元数据", total))
-	httpserver.Write(w, http.StatusOK, map[string]any{"filename": fmt.Sprintf("tokens-%s.csv", time.Now().Format("20060102-150405")), "content": builder.String(), "count": total}, "导出成功")
+	if !httpserver.DecodeJSON(w, r, &request) {
+		return
+	}
+	if len(request.IDs) == 0 {
+		httpserver.Error(w, r, http.StatusBadRequest, "EXPORT_TARGET_REQUIRED", "请先选择要导出的 Token", nil)
+		return
+	}
+	if len(request.IDs) > maxImportRows {
+		httpserver.Error(w, r, http.StatusBadRequest, "EXPORT_TOO_MANY_TARGETS", fmt.Sprintf("每次最多导出 %d 个 Token", maxImportRows), nil)
+		return
+	}
+	ids := make([]string, 0, len(request.IDs))
+	seen := make(map[string]struct{}, len(request.IDs))
+	for _, id := range request.IDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if _, found := seen[id]; !found {
+			seen[id] = struct{}{}
+			ids = append(ids, id)
+		}
+	}
+	if len(ids) == 0 {
+		httpserver.Error(w, r, http.StatusBadRequest, "EXPORT_TARGET_REQUIRED", "请先选择要导出的 Token", nil)
+		return
+	}
+	tokensByID, err := h.service.AccessTokensByIDs(r.Context(), ids)
+	if err != nil {
+		httpserver.Error(w, r, http.StatusInternalServerError, "TOKEN_EXPORT_FAILED", "导出失败", nil)
+		return
+	}
+	tokens := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if token, found := tokensByID[id]; found {
+			tokens = append(tokens, token)
+		}
+	}
+	if len(tokens) != len(ids) {
+		httpserver.Error(w, r, http.StatusNotFound, "TOKEN_NOT_FOUND", "部分选中的 Token 已不存在，请刷新后重试", nil)
+		return
+	}
+	content := []byte(strings.Join(tokens, "\r\n"))
+	filename := fmt.Sprintf("access_tokens_%s.txt", time.Now().Format("20060102_150405"))
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(len(content)))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(content)
+	h.log(r, "token_export", "", fmt.Sprintf("导出 %d 个选中 Token 的 Access Token", len(tokens)))
 }
 
 func handleError(w http.ResponseWriter, r *http.Request, err error, message string) {

@@ -5,12 +5,14 @@ import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
-import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, FileInput, Input, PageHeader, Pagination, Select, Spinner, Textarea, cn, type Column, useToast } from "../../components/ui";
-import { api, errorMessage, jsonBody } from "../../lib/api";
+import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea, cn, type Column, useToast } from "../../components/ui";
+import { api, downloadApiFile, errorMessage, jsonBody } from "../../lib/api";
+import { saveBlob } from "../../lib/download";
 import { parsePageSize } from "../../lib/pagination";
-import { accountStatusLabel, checkStateLabel, localizeStatusPreview } from "../../lib/status-labels";
+import { accountStatusLabel, checkStateLabel } from "../../lib/status-labels";
 import { formatTime, type TokenEditView, type TokenView } from "./types";
 const TokenContentDialog = lazy(() => import("./token-content-dialog"));
+const TokenImportDialog = lazy(() => import("./token-import-dialog").then((module) => ({ default: module.TokenImportDialog })));
 interface PageData extends Record<string, unknown> {
   items: TokenView[];
   page: number;
@@ -34,8 +36,8 @@ export function TokensPage() {
   const [content, setContent] = useState<TokenView | null>(null);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [importFile, setImportFile] = useState<File | null>(null);
-  const [preview, setPreview] = useState<Record<string, unknown> | null>(null);
+  const [importJob, setImportJob] = useState<{ id: string; skipped: number } | null>(null);
+  const [exporting, setExporting] = useState(false);
   const { notify } = useToast();
   const page = Math.max(1, Number(params.get("page") || 1));
   const pageSize = parsePageSize(params.get("page_size"));
@@ -61,6 +63,31 @@ export function TokensPage() {
     }
   }, [page, pageSize, search, status, notify]);
   useEffect(() => { const timer = setTimeout(() => void load(), 350); return () => clearTimeout(timer); }, [load]);
+  useEffect(() => {
+    if (!importJob) return;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      try {
+        const { job } = await api<{ job: { state: string; succeeded: number; failed: number } } & Record<string, unknown>>(
+          `/api/v1/jobs/${importJob.id}`, { signal: controller.signal });
+        if (controller.signal.aborted) return;
+        if (job.state === "queued" || job.state === "running") {
+          timer = setTimeout(() => void poll(), 1000);
+          return;
+        }
+        setImportJob(null);
+        notify("Token 导入完成", `成功 ${job.succeeded} 条，失败 ${job.failed} 条，跳过 ${importJob.skipped} 条`, job.failed > 0 ? "danger" : "success");
+        await load();
+      } catch (error) {
+        if (controller.signal.aborted) return;
+        setImportJob(null);
+        notify("暂时无法获取导入结果", `可在批量任务中查看。${errorMessage(error)}`, "danger");
+      }
+    };
+    void poll();
+    return () => { controller.abort(); clearTimeout(timer); };
+  }, [importJob, load, notify]);
   const updateParam = (key: string, value: string) => {
     const next = new URLSearchParams(params); if (!value || value === "all")
       next.delete(key);
@@ -147,37 +174,22 @@ export function TokensPage() {
     }
   };
   const batchDelete = async () => { await batch("delete"); setBatchDeleteOpen(false); };
-  const doImport = async (dryRun: boolean) => {
-    if (!importFile)
-      return; const data = new FormData(); data.set("file", importFile); try {
-        const result = await api<Record<string, unknown>>(`/api/v1/token-imports?dry_run=${dryRun}`, { method: "POST", headers: dryRun ? {} : { "Idempotency-Key": crypto.randomUUID() }, body: data });
-        if (dryRun)
-          setPreview(result);
-        else {
-          notify("导入任务已创建");
-          setImportOpen(false);
-          setPreview(null);
-          await load();
-        }
-      }
-    catch (error) {
-      notify("导入失败", errorMessage(error), "danger");
-    }
-  };
-  const exportData = async () => {
+  const exportSelected = async () => {
+    if (selected.size === 0) return;
+    const count = selected.size;
+    setExporting(true);
     try {
-      const data = await api<{
-        filename: string;
-        content: string;
-      } & Record<string, unknown>>("/api/v1/token-exports", { method: "POST", ...jsonBody({}) });
-      download(data.filename, data.content);
-      notify("导出成功");
+      const data = await downloadApiFile("/api/v1/token-exports", { method: "POST", ...jsonBody({ ids: [...selected] }) }, "access_tokens.txt");
+      saveBlob(data.filename, data.blob);
+      notify(`已导出 ${count} 个 Token`);
     }
     catch (error) {
       notify("导出失败", errorMessage(error), "danger");
     }
+    finally {
+      setExporting(false);
+    }
   };
-  const localizedPreview = useMemo(() => preview ? JSON.stringify(localizeStatusPreview(preview), null, 2) : "", [preview]);
   const columns = useMemo<Array<Column<TokenView>>>(() => [
     {
       key: "account", header: "账号", render: (item) => <div>
@@ -220,10 +232,15 @@ export function TokensPage() {
     },
   ], [load]);
   return <>
+    {importOpen ? <Suspense fallback={<Dialog open onOpenChange={setImportOpen} title="导入 Token"><Spinner label="加载导入工具" /></Dialog>}>
+      <TokenImportDialog onClose={() => setImportOpen(false)} onImported={(id, skipped) => {
+        if (id) setImportJob({ id, skipped });
+      }} />
+    </Suspense> : null}
     {content ? <Suspense fallback={<Spinner label="加载账号内容" />}><TokenContentDialog key={content.id} tokenId={content.id} label={content.email || content.name || "未命名账号"} onClose={() => setContent(null)} /></Suspense> : null}
     <PageHeader title="GPT账号" description={`共 ${total} 个账号凭据`} actions={<>
-      <Button onClick={() => setImportOpen(true)}>导入</Button>
-      <Button onClick={() => void exportData()}>导出数据</Button>
+      <Button onClick={() => setImportOpen(true)}>批量导入</Button>
+      <Button disabled={selected.size === 0 || exporting} onClick={() => void exportSelected()}>{exporting ? "导出中…" : "导出选中"}</Button>
       <Button variant="primary" onClick={openCreate}>新增账号</Button>
     </>} />
     <Card>
@@ -274,18 +291,7 @@ export function TokensPage() {
         </div>
       </form>
     </Dialog>
-    <Dialog open={importOpen} onOpenChange={setImportOpen} title="导入 Token" description="CSV 列：name,email,access_token,session_token,access_expires_at,status,note">
-      <div className="grid gap-3">
-        <FileInput aria-label="选择 Token CSV 文件" name="token-import" accept=".csv,text/csv" onChange={(event) => { setImportFile(event.target.files?.[0] || null); setPreview(null); }} />
-        {localizedPreview && <pre className="max-h-64 overflow-auto rounded-lg bg-app-muted p-3 text-xs text-app-subtle">
-          {localizedPreview}</pre>}<div className="flex justify-end gap-2">
-          <Button disabled={!importFile} onClick={() => void doImport(true)}>预检</Button>
-          <Button variant="primary" disabled={!importFile || !preview} onClick={() => void doImport(false)}>确认导入</Button>
-        </div>
-      </div>
-    </Dialog>
     <ConfirmDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(null)} title="删除 Token" description={`确定删除 ${deleting?.email || deleting?.name || "该 Token"}？凭据将立即删除。`} confirmLabel="删除" danger onConfirm={() => void remove()} />
     <ConfirmDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen} title="批量删除 Token" description={`确定删除选中的 ${selected.size} 项吗？该操作由后台任务执行。`} confirmLabel="创建删除任务" danger onConfirm={() => void batchDelete()} />
   </>;
 }
-function download(filename: string, content: string) { const blob = new Blob([content], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url); }

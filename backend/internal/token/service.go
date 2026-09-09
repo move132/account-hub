@@ -110,6 +110,10 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]View, int, err
 	return views, total, nil
 }
 
+func (s *Service) AccessTokensByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	return s.repository.AccessTokensByIDs(ctx, ids)
+}
+
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (View, error) {
 	if input.AccessToken != nil {
 		trimmed := strings.TrimSpace(strings.TrimPrefix(*input.AccessToken, "Bearer "))

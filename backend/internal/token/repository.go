@@ -114,6 +114,66 @@ func (r *Repository) List(ctx context.Context, filter ListFilter) ([]Record, int
 	return records, total, rows.Err()
 }
 
+func (r *Repository) ExistingAccessTokens(ctx context.Context, tokens []string) (map[string]struct{}, error) {
+	existing := make(map[string]struct{})
+	for start := 0; start < len(tokens); start += 400 {
+		batch := tokens[start:min(start+400, len(tokens))]
+		args := make([]any, len(batch))
+		for index, token := range batch {
+			args[index] = token
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		rows, err := r.db.QueryContext(ctx, "SELECT access_token FROM tokens WHERE access_token IN ("+placeholders+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var token string
+			if err := rows.Scan(&token); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			existing[token] = struct{}{}
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return existing, nil
+}
+
+func (r *Repository) AccessTokensByIDs(ctx context.Context, ids []string) (map[string]string, error) {
+	result := make(map[string]string, len(ids))
+	for start := 0; start < len(ids); start += 400 {
+		batch := ids[start:min(start+400, len(ids))]
+		args := make([]any, len(batch))
+		for index, id := range batch {
+			args[index] = id
+		}
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(batch)), ",")
+		rows, err := r.db.QueryContext(ctx, "SELECT id, access_token FROM tokens WHERE id IN ("+placeholders+")", args...)
+		if err != nil {
+			return nil, err
+		}
+		for rows.Next() {
+			var id, token string
+			if err := rows.Scan(&id, &token); err != nil {
+				rows.Close()
+				return nil, err
+			}
+			result[id] = token
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return nil, err
+		}
+	}
+	return result, nil
+}
+
 func (r *Repository) Update(ctx context.Context, id string, input UpdateInput) (Record, error) {
 	if input.Version < 1 {
 		return Record{}, ErrVersionConflict

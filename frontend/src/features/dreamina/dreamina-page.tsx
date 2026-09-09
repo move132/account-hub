@@ -7,7 +7,8 @@ import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea, TooltipText, cn, type Column, useToast } from "../../components/ui";
-import { api, errorMessage, jsonBody } from "../../lib/api";
+import { api, downloadApiFile, errorMessage, jsonBody } from "../../lib/api";
+import { saveBlob } from "../../lib/download";
 import { parsePageSize } from "../../lib/pagination";
 import { accountStatusLabel, checkStateLabel } from "../../lib/status-labels";
 import { formatTime, type DreaminaEditView, type DreaminaView } from "./types";
@@ -39,6 +40,7 @@ export function DreaminaPage() {
   const [batchConfirmAction, setBatchConfirmAction] = useState<BatchConfirmAction | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importJob, setImportJob] = useState<{ id: string; skipped: number } | null>(null);
+  const [exporting, setExporting] = useState(false);
   const { notify } = useToast();
   const page = Math.max(1, Number(params.get("page") || 1)), pageSize = parsePageSize(params.get("page_size")), search = params.get("search") || "", status = params.get("status") || "all";
   const load = useCallback(async () => {
@@ -176,16 +178,17 @@ export function DreaminaPage() {
     await batch(actionName);
   };
   const exportData = async () => {
+    setExporting(true);
     try {
-      const data = await api<{
-        filename: string;
-        content: string;
-      } & Record<string, unknown>>("/api/v1/dreamina-exports", { method: "POST", ...jsonBody({}) });
-      download(data.filename, data.content);
-      notify("导出成功");
+      const data = await downloadApiFile("/api/v1/dreamina-exports", { method: "POST", ...jsonBody({}) }, "dreamina_sessions_export.zip");
+      saveBlob(data.filename, data.blob);
+      notify("Session 导出成功");
     }
     catch (error) {
       notify("导出失败", errorMessage(error), "danger");
+    }
+    finally {
+      setExporting(false);
     }
   };
   const columns = useMemo<Array<Column<DreaminaView>>>(() => [
@@ -241,8 +244,8 @@ export function DreaminaPage() {
   ], [load]);
   return <>
     <PageHeader title="即梦账号" description={`共 ${total} 个账号`} actions={<>
-      <Button onClick={() => setImportOpen(true)}>导入</Button>
-      <Button onClick={() => void exportData()}>导出数据</Button>
+      <Button onClick={() => setImportOpen(true)}>批量导入</Button>
+      <Button disabled={exporting} onClick={() => void exportData()}>{exporting ? "导出中…" : "导出启用 Session"}</Button>
       <Button variant="primary" onClick={openCreate}>新增账号</Button>
     </>} />
     <Card>
@@ -298,4 +301,3 @@ export function DreaminaPage() {
     <ConfirmDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen} title="批量删除即梦账号" description={`确定删除选中的 ${selected.size} 项吗？该操作由后台任务执行。`} confirmLabel="创建删除任务" danger onConfirm={() => void batchDelete()} />
   </>;
 }
-function download(filename: string, content: string) { const blob = new Blob([content], { type: "text/csv;charset=utf-8" }); const url = URL.createObjectURL(blob); const anchor = document.createElement("a"); anchor.href = url; anchor.download = filename; anchor.click(); URL.revokeObjectURL(url); }

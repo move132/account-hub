@@ -3,7 +3,6 @@ package app
 import (
 	"bytes"
 	"context"
-	"encoding/csv"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -107,15 +106,14 @@ func TestAuthenticationAndSettingsFlow(t *testing.T) {
 	if _, exists := firstToken["video_eligible"]; exists {
 		t.Fatal("create response still exposes the retired capability field")
 	}
-	exportedResponse := authenticatedRequest(t, server.URL+"/api/v1/token-exports", http.MethodPost, []byte(`{}`), sessionCookie, csrfCookie, "")
-	exported := decodeEnvelope(t, exportedResponse)
-	exportContent, ok := exported.Data["content"].(string)
-	if !ok || !exported.Success || strings.Contains(exportContent, "video_eligible") || strings.Contains(exportContent, "top-secret-token") {
-		t.Fatalf("export contains a retired field or secret: %+v", exported)
-	}
-	exportRows, err := csv.NewReader(strings.NewReader(exportContent)).ReadAll()
-	if err != nil || len(exportRows) != 2 || len(exportRows[0]) != 9 || len(exportRows[1]) != 9 || exportRows[0][6] != "note" || exportRows[1][6] != "review,note" {
-		t.Fatalf("export columns shifted or note was damaged: rows=%v err=%v", exportRows, err)
+	exportBody, _ := json.Marshal(map[string]any{"ids": []any{firstToken["id"]}})
+	exportedResponse := authenticatedRequest(t, server.URL+"/api/v1/token-exports", http.MethodPost, exportBody, sessionCookie, csrfCookie, "")
+	exportContent, err := io.ReadAll(exportedResponse.Body)
+	exportedResponse.Body.Close()
+	disposition := exportedResponse.Header.Get("Content-Disposition")
+	if err != nil || exportedResponse.StatusCode != http.StatusOK || !strings.HasPrefix(exportedResponse.Header.Get("Content-Type"), "text/plain") ||
+		string(exportContent) != "top-secret-token" || !strings.Contains(disposition, "access_tokens_") || !strings.Contains(disposition, ".txt") {
+		t.Fatalf("selected Access Token export is invalid: status=%d headers=%v content=%q err=%v", exportedResponse.StatusCode, exportedResponse.Header, exportContent, err)
 	}
 	var count int
 	if err := application.DB().QueryRow("SELECT COUNT(1) FROM tokens").Scan(&count); err != nil || count != 1 {
@@ -126,7 +124,7 @@ func TestAuthenticationAndSettingsFlow(t *testing.T) {
 		t.Fatalf("business credential was not stored as specified: value=%q err=%v", storedAccessToken, err)
 	}
 
-	csvData := "name,email,access_token,session_token,access_expires_at,status,note\nImported,import@example.com,import-secret,,,enabled,test\n"
+	csvData := "Imported,import-secret,,test\n"
 	previewResponse := multipartRequest(t, server.URL+"/api/v1/token-imports?dry_run=true", csvData, sessionCookie, csrfCookie, "preview-import")
 	previewEnvelope := decodeEnvelope(t, previewResponse)
 	previewJSON, _ := json.Marshal(previewEnvelope)

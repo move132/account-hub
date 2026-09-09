@@ -94,6 +94,24 @@ func (r *Repository) ExistingSessionIDs(ctx context.Context, ids []string) (map[
 	return existing, nil
 }
 
+func (r *Repository) ActiveSessionIDs(ctx context.Context) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT session_id FROM dreamina_accounts
+        WHERE status = 'enabled' AND session_id <> '' ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	ids := make([]string, 0)
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
 func (r *Repository) List(ctx context.Context, filter ListFilter) ([]Record, int, error) {
 	if filter.Page < 1 {
 		filter.Page = 1

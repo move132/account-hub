@@ -1,7 +1,8 @@
 package dreamina
 
 import (
-	"encoding/csv"
+	"archive/zip"
+	"bytes"
 	"errors"
 	"fmt"
 	"net/http"
@@ -219,28 +220,53 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
-	var builder strings.Builder
-	writer := csv.NewWriter(&builder)
-	_ = writer.Write([]string{"id", "email", "status", "check_state", "credit_balance", "session_expires_at", "note", "created_at", "updated_at"})
-	page, total := 1, 0
-	for {
-		items, count, err := h.service.List(r.Context(), ListFilter{Page: page, PageSize: 100, Sort: "created_at", Order: "asc"})
-		if err != nil {
-			httpserver.Error(w, r, http.StatusInternalServerError, "DREAMINA_EXPORT_FAILED", "导出失败", nil)
+	sessionIDs, err := h.service.ActiveSessionIDs(r.Context())
+	if err != nil {
+		httpserver.Error(w, r, http.StatusInternalServerError, "DREAMINA_EXPORT_FAILED", "导出失败", nil)
+		return
+	}
+	if len(sessionIDs) == 0 {
+		httpserver.Error(w, r, http.StatusNotFound, "DREAMINA_EXPORT_EMPTY", "没有找到启用的 Session", nil)
+		return
+	}
+
+	var buffer bytes.Buffer
+	archive := zip.NewWriter(&buffer)
+	const batchSize = 300
+	for start := 0; start < len(sessionIDs); start += batchSize {
+		end := min(start+batchSize, len(sessionIDs))
+		entry, createErr := archive.Create(fmt.Sprintf("%d-%d.txt", start+1, end))
+		if createErr != nil {
+			_ = archive.Close()
+			httpserver.Error(w, r, http.StatusInternalServerError, "DREAMINA_EXPORT_FAILED", "创建导出文件失败", nil)
 			return
 		}
-		for _, item := range items {
-			_ = writer.Write([]string{item.ID, item.Email, item.Status, item.CheckState, item.CreditBalance, item.SessionExpiresAt, item.Note, strconv.FormatInt(item.CreatedAt, 10), strconv.FormatInt(item.UpdatedAt, 10)})
+		if _, writeErr := entry.Write([]byte(strings.Join(sessionIDs[start:end], "|"))); writeErr != nil {
+			_ = archive.Close()
+			httpserver.Error(w, r, http.StatusInternalServerError, "DREAMINA_EXPORT_FAILED", "写入导出文件失败", nil)
+			return
 		}
-		total = count
-		if page*100 >= count {
-			break
-		}
-		page++
 	}
-	writer.Flush()
-	h.log(r, "dreamina_export", "", fmt.Sprintf("导出 %d 个即梦账号的元数据", total))
-	httpserver.Write(w, http.StatusOK, map[string]any{"filename": fmt.Sprintf("dreamina-%s.csv", time.Now().Format("20060102-150405")), "content": builder.String(), "count": total}, "导出成功")
+	allEntry, err := archive.Create("session-all.txt")
+	if err == nil {
+		_, err = allEntry.Write([]byte(strings.Join(sessionIDs, "|")))
+	}
+	if closeErr := archive.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		httpserver.Error(w, r, http.StatusInternalServerError, "DREAMINA_EXPORT_FAILED", "创建导出文件失败", nil)
+		return
+	}
+
+	filename := fmt.Sprintf("dreamina_sessions_export_%s.zip", time.Now().Format("2006-01-02_15-04-05"))
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", filename))
+	w.Header().Set("Content-Length", strconv.Itoa(buffer.Len()))
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(buffer.Bytes())
+	h.log(r, "dreamina_export", "", fmt.Sprintf("导出 %d 个启用的即梦 Session", len(sessionIDs)))
 }
 
 func handleError(w http.ResponseWriter, r *http.Request, err error, message string) {

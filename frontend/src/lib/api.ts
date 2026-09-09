@@ -43,6 +43,38 @@ export async function api<T extends Record<string, unknown>>(path: string, init:
   return envelope.data
 }
 
+export async function downloadApiFile(path: string, init: RequestInit = {}, fallbackFilename = "download.bin") {
+  const headers = new Headers(init.headers)
+  const method = (init.method ?? "GET").toUpperCase()
+  if (!(init.body instanceof FormData) && init.body && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json")
+  }
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-CSRF-Token", csrfToken())
+  }
+  const response = await fetch(path, { ...init, headers, credentials: "include" })
+  if (!response.ok) {
+    try {
+      const envelope = (await response.json()) as Envelope
+      throw new ApiError(envelope)
+    } catch (error) {
+      if (error instanceof ApiError) throw error
+      throw new Error(`下载失败（HTTP ${response.status}）`)
+    }
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? ""
+  const encoded = disposition.match(/filename\*=UTF-8''([^;]+)/i)?.[1]
+  const plain = disposition.match(/filename="?([^";]+)"?/i)?.[1]
+  let filename = fallbackFilename
+  try {
+    filename = encoded ? decodeURIComponent(encoded) : plain || fallbackFilename
+  } catch {
+    filename = plain || fallbackFilename
+  }
+  filename = filename.split(/[\\/]/).pop()?.replace(/[\u0000-\u001f]/g, "") || fallbackFilename
+  return { blob: await response.blob(), filename }
+}
+
 export function jsonBody(value: unknown): Pick<RequestInit, "body"> {
   return { body: JSON.stringify(value) }
 }

@@ -88,6 +88,10 @@ func (s *Service) List(ctx context.Context, filter ListFilter) ([]View, int, err
 	return views, total, nil
 }
 
+func (s *Service) ActiveSessionIDs(ctx context.Context) ([]string, error) {
+	return s.repository.ActiveSessionIDs(ctx)
+}
+
 func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (View, error) {
 	if input.Email != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*input.Email))

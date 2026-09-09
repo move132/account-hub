@@ -203,8 +203,7 @@ func registerExecutors(manager *job.Manager, settingRepository *settings.Reposit
 		if err := json.Unmarshal(payload, &input); err != nil {
 			return err
 		}
-		_, err := tokens.Create(ctx, input)
-		return err
+		return tokens.Import(ctx, input)
 	}, nil)
 	manager.Register("token", "check", func(ctx context.Context, id string, _ json.RawMessage) error {
 		_, err := tokens.Check(ctx, id)
