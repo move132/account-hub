@@ -112,7 +112,7 @@ export function TokenImportDialog({ onClose, onImported }: {
   return <Dialog open onOpenChange={(open) => { if (!open && !pendingRef.current) onClose(); }}
     title={preview ? `导入预览（${preview.total} 条）` : "批量导入 Token"}
     description={preview ? "重复的 Access Token 会自动跳过，格式错误的行需返回修改。" : "可粘贴 Token，也可上传 TXT/CSV 文件。"}
-    contentClassName={preview ? "w-[min(96vw,1120px)]" : undefined}>
+    contentClassName={preview ? "w-[min(96vw,1120px)]" : "w-[min(92vw,760px)]"}>
     {preview ? <div className="grid gap-4">
       <div className="flex flex-wrap gap-2" role="status">
         <Badge tone="success">新增 {preview.valid} 条</Badge>
@@ -123,7 +123,7 @@ export function TokenImportDialog({ onClose, onImported }: {
         <DataTable columns={previewColumns} rows={previewRows} />
       </div>
       {preview.total > 50 ? <Pagination page={page} totalPages={Math.ceil(preview.total / 50)} onPageChange={setPage} /> : null}
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 border-t border-app-border pt-4">
         <Button disabled={Boolean(pending)} onClick={() => setPreview(null)}>返回编辑</Button>
         <Button variant="primary" disabled={Boolean(pending) || preview.invalid > 0 || preview.valid === 0} onClick={() => void run("import")}>
           {pending === "import" ? "导入中…" : "确认导入"}
@@ -131,16 +131,16 @@ export function TokenImportDialog({ onClose, onImported }: {
       </div>
     </div> : <div className="grid gap-5">
       <Tabs.Root value={method} onValueChange={setMethod}>
-        <Tabs.List aria-label="Token 导入方式" className="mb-5 flex gap-5 border-b border-app-border">
+        <Tabs.List aria-label="Token 导入方式" className="mb-4 flex gap-1 border-b border-app-border">
           {[{ value: "paste", label: "粘贴内容" }, { value: "upload", label: "上传文件" }].map((tab) => <Tabs.Trigger key={tab.value} value={tab.value} asChild>
-            <Button variant="ghost" disabled={Boolean(pending)} className="rounded-none border-0 border-b-2 border-transparent px-0 pb-3 data-[state=active]:border-app-info data-[state=active]:text-app-info">
+            <Button variant="ghost" disabled={Boolean(pending)} className="rounded-none border-0 border-b-2 border-transparent px-3 pb-2 pt-1 data-[state=active]:border-app-primary data-[state=active]:text-app-primary">
               {tab.label}
             </Button>
           </Tabs.Trigger>)}
         </Tabs.List>
         <div className="mb-3 grid gap-2">
           <p className="text-sm font-semibold">Token 列表</p>
-          <div className="rounded-md bg-app-muted p-3 text-sm leading-6">
+          <div className="rounded-lg border border-app-border bg-app-muted px-3 py-2.5 text-sm leading-6">
             <p>1. 每行一个 Access Token；或</p>
             <p className="break-words font-mono">2. 每行格式：[名称],[Access Token],[Session Token],[描述(可选)]</p>
           </div>
@@ -166,10 +166,10 @@ export function TokenImportDialog({ onClose, onImported }: {
           </Field>
         </Tabs.Content>
       </Tabs.Root>
-      <p className="rounded-md bg-app-info/10 px-4 py-3 text-sm leading-6 text-app-info">
+      <p className="rounded-lg border border-app-primary/25 bg-app-primary/5 px-3 py-2.5 text-sm leading-6 text-app-subtle">
         批量导入按 Access Token 去重并跳过已有记录；名称相同但 Token 不同的记录仍会新增。
       </p>
-      <div className="flex justify-end gap-2">
+      <div className="flex justify-end gap-2 border-t border-app-border pt-4">
         <Button disabled={Boolean(pending)} onClick={onClose}>取消</Button>
         <Button disabled={!hasContent || Boolean(pending)} onClick={() => void run("preview")}>
           {pending === "preview" ? "预览中…" : "预览"}
@@ -181,4 +181,3 @@ export function TokenImportDialog({ onClose, onImported }: {
     </div>}
   </Dialog>;
 }
-

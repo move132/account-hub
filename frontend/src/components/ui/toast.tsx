@@ -96,7 +96,7 @@ export function ToastProvider({ children }: {
           {notice.description && <Toast.Description className="mt-0.5 break-words text-xs leading-5 text-app-subtle">
             {notice.description}</Toast.Description>}
         </div>
-        <Toast.Close aria-label="关闭通知" className="-mr-1 -mt-1 grid size-7 place-items-center rounded-md text-app-subtle outline-none transition-colors hover:bg-app-hover hover:text-app-foreground focus-visible:ring-2 focus-visible:ring-app-ring">
+        <Toast.Close aria-label="关闭通知" className="-mr-1 -mt-1 grid size-7 place-items-center rounded-md text-app-subtle outline-none transition-colors hover:bg-app-hover hover:text-app-foreground">
           <X aria-hidden="true" className="size-3.5" />
         </Toast.Close>
       </Toast.Root>;

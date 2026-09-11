@@ -203,7 +203,7 @@ function MediaElement({ media, onPreview }: {
 }) {
   if (media.type === "video")
     return <video aria-label="即梦历史视频" src={media.url} controls preload="metadata" className="aspect-video w-full rounded-md bg-black object-contain" />;
-  return <Button type="button" variant="ghost" aria-label="放大查看图片" title="放大查看图片" className="group relative !h-auto aspect-video w-full overflow-hidden rounded-md border-0 !p-0 focus-visible:ring-inset" onClick={() => onPreview(media)}>
+  return <Button type="button" variant="ghost" aria-label="放大查看图片" title="放大查看图片" className="group relative !h-auto aspect-video w-full overflow-hidden rounded-md border-0 !p-0" onClick={() => onPreview(media)}>
     <img src={media.url} alt="即梦历史作品" width={640} height={360} loading="lazy" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />
     <span className="pointer-events-none absolute bottom-2 right-2 grid size-7 place-items-center rounded-md bg-black/65 text-white shadow-sm">
       <ZoomIn aria-hidden="true" className="size-4" />

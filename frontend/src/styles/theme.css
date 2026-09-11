@@ -83,7 +83,10 @@ body {
 button, input, textarea { font: inherit; touch-action: manipulation; }
 ::selection { background: color-mix(in srgb, var(--primary) 28%, transparent); }
 * { scrollbar-color: var(--border) transparent; }
-a:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+:where(a, button, input, textarea, select, [role="button"]):focus-visible {
+  outline: 1px solid var(--muted-foreground);
+  outline-offset: -1px;
+}
 
 @keyframes toast-enter {
   from { transform: translate3d(24px, -6px, 0) scale(0.98); opacity: 0; }
