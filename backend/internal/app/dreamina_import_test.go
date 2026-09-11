@@ -16,8 +16,8 @@ import (
 
 func TestDreaminaLegacySessionImport(t *testing.T) {
 	config := Config{
-		DatabasePath:  filepath.Join(t.TempDir(), "test.db"),
-		AdminUsername: "admin", AdminPassword: "correct-horse-battery-staple", AdminPasswordManaged: true,
+		DatabasePath:    filepath.Join(t.TempDir(), "test.db"),
+		AdminUsername:   "admin",
 		DisplayTimezone: DisplayTimezone, AdminSessionTTL: time.Hour,
 		UpstreamRequestTimeout: time.Second, JobScanInterval: time.Hour,
 	}
@@ -28,7 +28,7 @@ func TestDreaminaLegacySessionImport(t *testing.T) {
 	defer application.Shutdown(context.Background())
 	server := httptest.NewServer(application.Handler())
 	defer server.Close()
-	response := login(t, server.URL, config.AdminPassword)
+	response := login(t, server.URL, application.initialAdminPassword)
 	var sessionCookie, csrfCookie *http.Cookie
 	for _, cookie := range response.Cookies() {
 		switch cookie.Name {

@@ -26,7 +26,7 @@ type envelope struct {
 func TestAuthenticationAndSettingsFlow(t *testing.T) {
 	config := Config{
 		ListenAddress: "127.0.0.1:0", DatabasePath: filepath.Join(t.TempDir(), "test.db"),
-		AdminUsername: "admin", AdminPassword: "correct-horse-battery-staple", AdminPasswordManaged: true,
+		AdminUsername:   "admin",
 		DisplayTimezone: DisplayTimezone, AdminSessionTTL: time.Hour,
 		UpstreamRequestTimeout: time.Second, UpstreamRetryCount: 0, JobScanInterval: time.Hour,
 	}
@@ -38,7 +38,7 @@ func TestAuthenticationAndSettingsFlow(t *testing.T) {
 	server := httptest.NewServer(application.Handler())
 	defer server.Close()
 
-	loginBody := []byte(`{"username":"admin","password":"correct-horse-battery-staple"}`)
+	loginBody, _ := json.Marshal(map[string]string{"username": "admin", "password": application.initialAdminPassword})
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/auth/login", bytes.NewReader(loginBody))
 	request.Header.Set("Content-Type", "application/json")
 	response, err := http.DefaultClient.Do(request)
@@ -166,14 +166,18 @@ func TestAuthenticationAndSettingsFlow(t *testing.T) {
 	}
 }
 
-func TestFreshDatabaseRequiresAdminPassword(t *testing.T) {
+func TestFreshDatabaseGeneratesAdminPassword(t *testing.T) {
 	config := Config{DatabasePath: filepath.Join(t.TempDir(), "test.db"), AdminUsername: "admin", JobScanInterval: time.Hour}
 	application, err := New(context.Background(), config, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if application != nil {
 		application.Shutdown(context.Background())
 	}
-	if err == nil {
-		t.Fatal("expected empty database without ADMIN_PASSWORD to fail")
+	if err != nil {
+		t.Fatalf("empty database should bootstrap automatically: %v", err)
+	}
+	password := application.initialAdminPassword
+	if !strings.HasPrefix(password, "hub_") || len(password) != len("hub_")+10 {
+		t.Fatalf("generated password has unexpected format: %q", password)
 	}
 }
 
@@ -181,7 +185,7 @@ func TestAdminPasswordCanBeChangedAfterBootstrap(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 	config := Config{
 		ListenAddress: "127.0.0.1:0", DatabasePath: dbPath,
-		AdminUsername: "admin", AdminPassword: "correct-horse-battery-staple", AdminPasswordManaged: true,
+		AdminUsername:   "admin",
 		DisplayTimezone: DisplayTimezone, AdminSessionTTL: time.Hour,
 		UpstreamRequestTimeout: time.Second, UpstreamRetryCount: 0, JobScanInterval: time.Hour,
 	}
@@ -191,11 +195,8 @@ func TestAdminPasswordCanBeChangedAfterBootstrap(t *testing.T) {
 	}
 	server := httptest.NewServer(application.Handler())
 
-	loginResponse := login(t, server.URL, "correct-horse-battery-staple")
-	loginEnvelope := decodeEnvelope(t, loginResponse)
-	if managed, ok := loginEnvelope.Data["password_managed_by_env"].(bool); !ok || managed {
-		t.Fatalf("password should be page-managed after bootstrap: %+v", loginEnvelope.Data)
-	}
+	loginResponse := login(t, server.URL, application.initialAdminPassword)
+	_ = decodeEnvelope(t, loginResponse)
 	var sessionCookie, csrfCookie *http.Cookie
 	for _, cookie := range loginResponse.Cookies() {
 		switch cookie.Name {
@@ -209,7 +210,7 @@ func TestAdminPasswordCanBeChangedAfterBootstrap(t *testing.T) {
 		t.Fatal("login did not set auth cookies")
 	}
 
-	changeBody := []byte(`{"current_password":"correct-horse-battery-staple","new_password":"new-correct-horse-battery-staple","confirm_password":"new-correct-horse-battery-staple"}`)
+	changeBody := []byte(`{"current_password":"` + application.initialAdminPassword + `","new_password":"new-correct-horse-battery-staple","confirm_password":"new-correct-horse-battery-staple"}`)
 	changeResponse := authenticatedRequest(t, server.URL+"/api/v1/auth/password", http.MethodPatch, changeBody, sessionCookie, csrfCookie, "")
 	changed := decodeEnvelope(t, changeResponse)
 	if changeResponse.StatusCode != http.StatusOK || !changed.Success {
@@ -229,10 +230,10 @@ func TestAdminPasswordCanBeChangedAfterBootstrap(t *testing.T) {
 	restartedServer := httptest.NewServer(restarted.Handler())
 	defer restartedServer.Close()
 
-	oldLogin := login(t, restartedServer.URL, "correct-horse-battery-staple")
+	oldLogin := login(t, restartedServer.URL, application.initialAdminPassword)
 	oldEnvelope := decodeEnvelope(t, oldLogin)
 	if oldLogin.StatusCode == http.StatusOK || oldEnvelope.Success {
-		t.Fatal("environment password unexpectedly overwrote the page-managed password")
+		t.Fatal("initial password unexpectedly remained valid after it was changed")
 	}
 	newLogin := login(t, restartedServer.URL, "new-correct-horse-battery-staple")
 	newEnvelope := decodeEnvelope(t, newLogin)

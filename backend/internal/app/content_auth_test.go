@@ -15,7 +15,7 @@ import (
 func TestTokenContentRoutesRequireAuthenticationAndCSRF(t *testing.T) {
 	application, err := New(context.Background(), Config{
 		DatabasePath:  filepath.Join(t.TempDir(), "content-auth.db"),
-		AdminUsername: "admin", AdminPassword: "content-test-password", AdminPasswordManaged: true, AdminSessionTTL: time.Hour,
+		AdminUsername: "admin", AdminSessionTTL: time.Hour,
 		DisplayTimezone: DisplayTimezone, JobScanInterval: time.Hour, UpstreamRequestTimeout: time.Second,
 	}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
@@ -39,7 +39,7 @@ func TestTokenContentRoutesRequireAuthenticationAndCSRF(t *testing.T) {
 			t.Fatalf("unauthenticated %s: status=%d body=%+v", endpoint.path, response.StatusCode, body)
 		}
 	}
-	loggedIn := login(t, server.URL, "content-test-password")
+	loggedIn := login(t, server.URL, application.initialAdminPassword)
 	cookies := loggedIn.Cookies()
 	_ = decodeEnvelope(t, loggedIn)
 	request, _ := http.NewRequest(http.MethodPost, server.URL+"/api/v1/tokens/missing/library/deletions", bytes.NewBufferString(`{"files":[]}`))

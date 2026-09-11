@@ -26,15 +26,16 @@ import (
 )
 
 type Application struct {
-	config    Config
-	logger    *slog.Logger
-	db        *sql.DB
-	server    *http.Server
-	cancel    context.CancelFunc
-	jobs      *job.Manager
-	scheduler *scheduler.Scheduler
-	workers   sync.WaitGroup
-	upstreams []*upstream.Client
+	config               Config
+	initialAdminPassword string
+	logger               *slog.Logger
+	db                   *sql.DB
+	server               *http.Server
+	cancel               context.CancelFunc
+	jobs                 *job.Manager
+	scheduler            *scheduler.Scheduler
+	workers              sync.WaitGroup
+	upstreams            []*upstream.Client
 }
 
 func New(ctx context.Context, config Config, logger *slog.Logger) (*Application, error) {
@@ -49,13 +50,15 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	}
 	auditRepository := audit.NewRepository(db)
 	authRepository := auth.NewRepository(db)
-	if err := auth.Bootstrap(ctx, authRepository, config.AdminUsername, config.AdminPassword, config.AdminPasswordManaged); err != nil {
+	initialAdminPassword, err := auth.Bootstrap(ctx, authRepository, config.AdminUsername)
+	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	config.AdminPassword = ""
-	config.AdminPasswordManaged = false
-	authService := auth.NewService(authRepository, config.AdminPasswordManaged, config.AdminSessionTTL)
+	if initialAdminPassword != "" {
+		logger.Info("generated initial admin password", "username", config.AdminUsername, "password", initialAdminPassword)
+	}
+	authService := auth.NewService(authRepository, config.AdminSessionTTL)
 	authHandler := auth.NewHandler(authService, auditRepository)
 
 	upstreamClient := upstream.NewClient(settingRepository, config.UpstreamRequestTimeout, config.UpstreamRetryCount).WithLogger(logger.With("component", "upstream"))
@@ -180,7 +183,7 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	mux.Handle("/", web.Handler())
 
 	workerContext, cancel := context.WithCancel(context.Background())
-	application := &Application{config: config, logger: logger, db: db, cancel: cancel, jobs: jobManager, scheduler: jobScheduler, upstreams: []*upstream.Client{upstreamClient, tokenUpstreamClient}}
+	application := &Application{config: config, initialAdminPassword: initialAdminPassword, logger: logger, db: db, cancel: cancel, jobs: jobManager, scheduler: jobScheduler, upstreams: []*upstream.Client{upstreamClient, tokenUpstreamClient}}
 	application.server = &http.Server{
 		Addr: config.ListenAddress, Handler: httpserver.Middleware(logger, mux),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 35 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 60 * time.Second,

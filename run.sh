@@ -5,7 +5,6 @@ APP_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
 FRONTEND_DIR="$APP_DIR/frontend"
 BACKEND_DIR="$APP_DIR/backend"
 ENV_FILE="$APP_DIR/.env"
-DATABASE_FILE="$BACKEND_DIR/data/account-hub.db"
 
 if [ -f "$ENV_FILE" ]; then
     set -a
@@ -40,12 +39,6 @@ if [ -z "${GOPROXY:-}" ]; then
     esac
 fi
 export GOPROXY
-
-if [ ! -f "$DATABASE_FILE" ] && [ -z "${ADMIN_PASSWORD:-}" ]; then
-    echo "ADMIN_PASSWORD is required when initializing an empty database." >&2
-    echo "Export it before running, or copy .env.example to .env and set a strong password." >&2
-    exit 1
-fi
 
 echo "Downloading backend dependencies..."
 if ! (

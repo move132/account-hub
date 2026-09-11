@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"fmt"
 	"strings"
 )
+
+const passwordAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 
 func RandomToken(bytes int) (string, error) {
 	value := make([]byte, bytes)
@@ -14,6 +17,27 @@ func RandomToken(bytes int) (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(value), nil
+}
+
+// RandomPassword returns a password with the format hub_<length random characters>.
+func RandomPassword(length int) (string, error) {
+	if length <= 0 {
+		return "", fmt.Errorf("password length must be positive")
+	}
+	value := make([]byte, length)
+	limit := byte(256 - (256 % len(passwordAlphabet)))
+	for index := 0; index < len(value); {
+		var randomByte [1]byte
+		if _, err := rand.Read(randomByte[:]); err != nil {
+			return "", err
+		}
+		if randomByte[0] >= limit {
+			continue
+		}
+		value[index] = passwordAlphabet[int(randomByte[0])%len(passwordAlphabet)]
+		index++
+	}
+	return "hub_" + string(value), nil
 }
 
 func Redact(value any) any {

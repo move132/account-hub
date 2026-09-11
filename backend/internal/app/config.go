@@ -1,9 +1,6 @@
 package app
 
-import (
-	"os"
-	"time"
-)
+import "time"
 
 const (
 	ListenAddress            = "0.0.0.0:8500"
@@ -21,8 +18,6 @@ type Config struct {
 	ListenAddress            string
 	DatabasePath             string
 	AdminUsername            string
-	AdminPassword            string
-	AdminPasswordManaged     bool
 	DisplayTimezone          string
 	AdminSessionTTL          time.Duration
 	UpstreamRequestTimeout   time.Duration
@@ -32,13 +27,10 @@ type Config struct {
 }
 
 func LoadConfig() Config {
-	password, managed := os.LookupEnv("ADMIN_PASSWORD")
 	return Config{
 		ListenAddress:            ListenAddress,
 		DatabasePath:             DatabasePath,
 		AdminUsername:            AdminUsername,
-		AdminPassword:            password,
-		AdminPasswordManaged:     managed,
 		DisplayTimezone:          DisplayTimezone,
 		AdminSessionTTL:          AdminSessionTTL,
 		UpstreamRequestTimeout:   UpstreamRequestTimeout,

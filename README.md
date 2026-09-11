@@ -21,11 +21,10 @@ ChatGPT/Sora 的 Token 检查和刷新使用 `tls-client v1.16.0`，固定 Chrom
 从 `account-manage/` 一键启动 Go API 和 Vite 开发服务器：
 
 ```sh
-export ADMIN_PASSWORD="replace-with-a-strong-password"
 sh ./run.sh
 ```
 
-也可以在 `account-manage/.env` 中设置 `ADMIN_PASSWORD`；数据库已经初始化后该变量可省略。
+首次启动空数据库时，系统会自动生成格式为 `hub_` 加 10 位随机字符的管理员密码，并在启动日志中输出。密码只在首次创建管理员时生成，之后保存在数据库中；如果在页面修改密码，后续重启会继续使用修改后的密码。
 
 脚本先下载 Go 依赖并编译后端，等待 <http://127.0.0.1:8500/health/ready> 就绪后，再在 <http://localhost:8501> 启动开发页面，将 `/api` 与 `/health` 代理到 `127.0.0.1:8500`。按 `Ctrl+C` 会同时停止前后端。
 
@@ -36,7 +35,6 @@ sh ./run.sh
 ```powershell
 cd account-manage\backend
 $env:GOPROXY = 'https://goproxy.cn|https://proxy.golang.org|direct'
-$env:ADMIN_PASSWORD = "replace-with-a-strong-password"
 go mod download
 go run ./cmd/account-hub
 ```
@@ -48,8 +46,6 @@ cd account-manage\frontend
 pnpm install --ignore-scripts
 pnpm dev
 ```
-
-首次空数据库启动必须提供至少 12 个字符的 `ADMIN_PASSWORD`。初始化后可移除该环境变量并重启，此后可以在页面修改密码；如果持续提供，密码由环境变量托管。
 
 运行时数据固定写入 `backend/data/account-hub.db`。请勿将 `backend/data/` 或 `.env` 提交到版本库或复制进镜像。
 
@@ -68,12 +64,9 @@ pnpm build
 生产构建：
 
 ```powershell
-$env:ADMIN_PASSWORD = "replace-with-a-strong-password"
 docker compose build
 docker compose up -d
 ```
-
-数据库已经初始化且希望由页面维护密码时，可在后续启动前移除 `ADMIN_PASSWORD`。Compose 仅透传宿主机已经设置的同名变量，不提供默认值。
 
 `compose.yaml` 只属于本项目，不会调用或修改仓库根目录的旧 Compose 配置。
 

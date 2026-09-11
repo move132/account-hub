@@ -13,40 +13,44 @@ import (
 
 var (
 	ErrInvalidCredentials = errors.New("invalid credentials")
-	ErrPasswordManaged    = errors.New("password managed by environment")
 )
 
 type Service struct {
-	repository      *Repository
-	passwordManaged bool
-	sessionTTL      time.Duration
+	repository *Repository
+	sessionTTL time.Duration
 }
 
-func NewService(repository *Repository, passwordManaged bool, sessionTTL time.Duration) *Service {
-	return &Service{repository: repository, passwordManaged: passwordManaged, sessionTTL: sessionTTL}
+func NewService(repository *Repository, sessionTTL time.Duration) *Service {
+	return &Service{repository: repository, sessionTTL: sessionTTL}
 }
 
-func Bootstrap(ctx context.Context, repository *Repository, username, environmentPassword string, managed bool) error {
+// Bootstrap creates the first administrator and returns the generated password.
+// Existing administrators are left unchanged and return an empty password.
+func Bootstrap(ctx context.Context, repository *Repository, username string) (string, error) {
 	count, err := repository.AdminCount(ctx)
 	if err != nil {
-		return fmt.Errorf("count admins: %w", err)
+		return "", fmt.Errorf("count admins: %w", err)
 	}
 	if count == 0 {
-		if !managed || environmentPassword == "" {
-			return errors.New("empty database requires ADMIN_PASSWORD")
-		}
-		hash, err := security.HashPassword(environmentPassword)
+		password, err := security.RandomPassword(10)
 		if err != nil {
-			return fmt.Errorf("invalid ADMIN_PASSWORD: %w", err)
+			return "", fmt.Errorf("generate admin password: %w", err)
+		}
+		hash, err := security.HashPassword(password)
+		if err != nil {
+			return "", fmt.Errorf("hash admin password: %w", err)
 		}
 		id, err := security.RandomID("admin")
 		if err != nil {
-			return err
+			return "", err
 		}
 		now := time.Now().UTC().UnixMilli()
-		return repository.CreateAdmin(ctx, Admin{ID: id, Username: username, PasswordHash: hash, CreatedAt: now, UpdatedAt: now})
+		if err := repository.CreateAdmin(ctx, Admin{ID: id, Username: username, PasswordHash: hash, CreatedAt: now, UpdatedAt: now}); err != nil {
+			return "", err
+		}
+		return password, nil
 	}
-	return nil
+	return "", nil
 }
 
 func (s *Service) Login(ctx context.Context, username, password string) (string, string, Session, error) {
@@ -119,5 +123,3 @@ func (s *Service) ChangePassword(ctx context.Context, session Session, current, 
 	}
 	return s.repository.UpdatePassword(ctx, admin.ID, hash, session.IDHash)
 }
-
-func (s *Service) PasswordManaged() bool { return s.passwordManaged }

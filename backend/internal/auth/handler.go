@@ -102,7 +102,7 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	setCookies(w, sessionToken, csrfToken, time.UnixMilli(session.ExpiresAt))
 	_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: "login", TargetKind: "auth", Summary: "管理员登录", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
 	httpserver.Write(w, http.StatusOK, map[string]any{
-		"username": session.Username, "expires_at": session.ExpiresAt, "password_managed_by_env": h.service.PasswordManaged(),
+		"username": session.Username, "expires_at": session.ExpiresAt,
 	}, "登录成功")
 }
 
@@ -125,7 +125,7 @@ func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) CurrentSession(w http.ResponseWriter, r *http.Request) {
 	session, _ := SessionFromContext(r.Context())
 	httpserver.Write(w, http.StatusOK, map[string]any{
-		"username": session.Username, "expires_at": session.ExpiresAt, "password_managed_by_env": h.service.PasswordManaged(),
+		"username": session.Username, "expires_at": session.ExpiresAt,
 	}, "查询成功")
 }
 
@@ -141,8 +141,6 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 	session, _ := SessionFromContext(r.Context())
 	if err := h.service.ChangePassword(r.Context(), session, body.CurrentPassword, body.NewPassword, body.ConfirmPassword); err != nil {
 		switch {
-		case errors.Is(err, ErrPasswordManaged):
-			httpserver.Error(w, r, http.StatusConflict, "PASSWORD_MANAGED_BY_ENV", "管理员密码由环境变量管理", nil)
 		case errors.Is(err, ErrInvalidCredentials):
 			httpserver.Error(w, r, http.StatusUnauthorized, "CURRENT_PASSWORD_INVALID", "当前密码错误", nil)
 		default:

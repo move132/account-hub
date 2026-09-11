@@ -3,7 +3,6 @@ import { api, jsonBody } from "../lib/api";
 export interface Session {
   username: string;
   expires_at: number;
-  password_managed_by_env: boolean;
 }
 interface AuthValue {
   session: Session | null;

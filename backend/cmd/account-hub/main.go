@@ -18,12 +18,10 @@ func main() {
 	config := app.LoadConfig()
 	listener, err := net.Listen("tcp", config.ListenAddress)
 	if err != nil {
-		config.AdminPassword = ""
 		logger.Error("startup failed", "error", err)
 		os.Exit(1)
 	}
 	application, err := app.New(context.Background(), config, logger)
-	config.AdminPassword = ""
 	if err != nil {
 		_ = listener.Close()
 		logger.Error("startup failed", "error", err)
