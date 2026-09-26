@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import ExternalLink from "lucide-react/dist/esm/icons/external-link.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
 import List from "lucide-react/dist/esm/icons/list.mjs";
 import ZoomIn from "lucide-react/dist/esm/icons/zoom-in.mjs";
-import { Badge, Button, Dialog, EmptyState, Spinner, useToast } from "../../components/ui";
+import { Badge, Button, Dialog, EmptyState, ImagePreview, Spinner, useToast } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { asRecord, flattenHistoryMedia, mergeHistoryItems, normalizeHistoryItems, type HistoryItem, type MediaItem } from "./media";
 
@@ -24,13 +24,14 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
   const [loaded, setLoaded] = useState(false);
   const [loading, setLoading] = useState(false);
   const [viewMode, setViewMode] = useState<HistoryViewMode>("detail");
-  const [previewImage, setPreviewImage] = useState<MediaItem | null>(null);
+  const [previewImageId, setPreviewImageId] = useState<string | null>(null);
+  const loadMoreRef = useRef(false);
   const { notify } = useToast();
   const media = useMemo(() => flattenHistoryMedia(history), [history]);
 
   useEffect(() => {
     if (!open) {
-      setPreviewImage(null);
+      setPreviewImageId(null);
       setLoading(false);
       return;
     }
@@ -38,7 +39,7 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
     setAssetOffset(0);
     setHasMoreAssets(false);
     setLoaded(false);
-    setPreviewImage(null);
+    setPreviewImageId(null);
     if (!accountId || !hasSessionId) {
       return;
     }
@@ -75,9 +76,10 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
   }, [accountId, hasSessionId, notify, open]);
 
   const loadMore = async () => {
-    if (loading || !accountId || !hasSessionId) {
-      return;
+    if (loading || loadMoreRef.current || !accountId || !hasSessionId) {
+      return { media: [] as MediaItem[], hasMore: false };
     }
+    loadMoreRef.current = true;
     setLoading(true);
     try {
       const page = await fetchAssets(accountId, assetOffset);
@@ -87,12 +89,42 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
       setAssetOffset(typeof page.next_offset === "number" ? page.next_offset : assetOffset + listCount);
       setHasMoreAssets(Boolean(page.has_more));
       setLoaded(true);
+      return { media: next.flatMap((item) => item.media), hasMore: Boolean(page.has_more) };
     }
     catch (error) {
       notify("历史作品加载失败", errorMessage(error), "danger");
+      return { media: [] as MediaItem[], hasMore: false };
     }
     finally {
+      loadMoreRef.current = false;
       setLoading(false);
+    }
+  };
+  const previewImages = useMemo(() => media.filter((item) => item.type === "image"), [media]);
+  const previewIndex = previewImageId ? previewImages.findIndex((item) => item.id === previewImageId) : -1;
+  const previewImage = previewIndex >= 0 ? previewImages[previewIndex] : null;
+  useEffect(() => {
+    if (!previewImage || loading || !hasMoreAssets || previewIndex < previewImages.length - 5) return;
+    void loadMore();
+  }, [accountId, assetOffset, hasMoreAssets, hasSessionId, loading, previewImage, previewIndex, previewImages.length]);
+  const openPreview = (item: MediaItem) => {
+    if (item.type === "image") setPreviewImageId(item.id);
+  };
+  const advancePreview = async () => {
+    if (previewIndex < previewImages.length - 1) {
+      setPreviewImageId(previewImages[previewIndex + 1].id);
+      return;
+    }
+    if (!hasMoreAssets || loading) return;
+    let more = hasMoreAssets;
+    for (let page = 0; page < 20 && more; page += 1) {
+      const added = await loadMore();
+      const nextImage = added.media.find((item) => item.type === "image");
+      if (nextImage) {
+        setPreviewImageId(nextImage.id);
+        return;
+      }
+      more = added.hasMore;
     }
   };
   const copyPrompt = async (prompt: string) => {
@@ -106,33 +138,33 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
   };
 
   return <>
-    <Dialog open={open} onOpenChange={(nextOpen) => {
+    <Dialog open={open} modal={!previewImage} onOpenChange={(nextOpen) => {
+      if (!nextOpen && previewImage) return;
       if (!nextOpen)
-        setPreviewImage(null);
+        setPreviewImageId(null);
       onOpenChange(nextOpen);
-    }} title="历史作品" description={email} contentClassName="w-[min(96vw,1200px)]">
+    }} title="历史作品" description={email} contentClassName={previewImage ? "hidden" : "w-[min(96vw,1200px)]"}>
       {!hasSessionId ? <EmptyState title="无 Session ID" description="该账号无法加载历史作品" /> : <>
-        {history.length > 0 && <HistoryModeControl value={viewMode} onChange={setViewMode} />}
-        {loading && !loaded ? <div className="grid min-h-48 place-items-center">
-          <Spinner label="加载历史作品" />
-        </div> : history.length === 0 ? <EmptyState title={loaded ? "暂无历史作品" : "尚未加载历史作品"} /> : viewMode === "media" ? <MediaOnlyGrid media={media} onPreview={setPreviewImage} /> : <HistoryDetailGrid items={history} onPreview={setPreviewImage} onCopyPrompt={copyPrompt} />}
+        {previewImage ? <ImagePreview
+          image={{ url: previewImage.url, label: "即梦历史作品" }}
+          index={previewIndex}
+          total={previewImages.length}
+          canPrevious={previewIndex > 0}
+          canNext={previewIndex < previewImages.length - 1 || hasMoreAssets}
+          nextLoading={loading}
+          onPrevious={previewImages.length > 1 ? () => { if (previewIndex > 0) setPreviewImageId(previewImages[previewIndex - 1].id); } : undefined}
+          onNext={previewImages.length > 0 ? advancePreview : undefined}
+          onClose={() => setPreviewImageId(null)}
+        /> : <>
+          {history.length > 0 && <HistoryModeControl value={viewMode} onChange={setViewMode} />}
+          {loading && !loaded ? <div className="grid min-h-48 place-items-center">
+            <Spinner label="加载历史作品" />
+          </div> : history.length === 0 ? <EmptyState title={loaded ? "暂无历史作品" : "尚未加载历史作品"} /> : viewMode === "media" ? <MediaOnlyGrid media={media} onPreview={openPreview} /> : <HistoryDetailGrid items={history} onPreview={openPreview} onCopyPrompt={copyPrompt} />}
+        </>}
         {hasMoreAssets && <div className="mt-4 flex justify-center border-t border-app-border pt-4">
           <Button disabled={loading} onClick={() => void loadMore()}>
             {loading ? "加载中..." : "加载更多"}</Button>
         </div>}
-      </>}
-    </Dialog>
-    <Dialog open={Boolean(previewImage)} onOpenChange={(previewOpen) => !previewOpen && setPreviewImage(null)} title="图片预览" contentClassName="w-[min(96vw,1280px)]">
-      {previewImage && <>
-        <div className="grid min-h-48 place-items-center overflow-hidden rounded-md bg-black">
-          <img src={previewImage.url} alt="即梦历史作品大图" width={1920} height={1080} className="max-h-[calc(88vh-8rem)] max-w-full object-contain" />
-        </div>
-        <div className="mt-3 flex justify-end">
-          <Button size="sm" asChild>
-            <a href={previewImage.url} target="_blank" rel="noreferrer">
-              <ExternalLink aria-hidden="true" className="size-3.5" />打开原文件</a>
-          </Button>
-        </div>
       </>}
     </Dialog>
   </>;

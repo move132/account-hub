@@ -1,12 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import { Badge, Button, Card, EmptyState, Spinner, cn } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { contentPath, mergeContentItems, type ConversationDetail, type ConversationPage, type ConversationSummary } from "./content-types";
-import { TokenContentImage, TokenImagePreview } from "./token-content-image";
+import { TokenContentImage, TokenContentImagePreview } from "./token-content-image";
 import { formatTime } from "./types";
 
-export function TokenConversationsPanel({ tokenId }: { tokenId: string }) {
+export function TokenConversationsPanel({ tokenId, onPreviewChange }: { tokenId: string; onPreviewChange?: (open: boolean) => void }) {
   const [items, setItems] = useState<ConversationSummary[]>([]);
   const [offset, setOffset] = useState(0);
   const [nextOffset, setNextOffset] = useState(0);
@@ -36,6 +36,7 @@ export function TokenConversationsPanel({ tokenId }: { tokenId: string }) {
     return () => controller.abort();
   }, [tokenId, offset, reload]);
   const refresh = () => { setOffset(0); setReload((value) => value + 1); };
+  useEffect(() => () => onPreviewChange?.(false), [onPreviewChange]);
 
   return <section aria-label="账号聊天记录" className="grid min-w-0 grid-cols-1 gap-3">
     <div className="flex items-center justify-between gap-2"><p className="text-sm text-app-subtle">{total !== null ? `共 ${total} 条会话` : `已加载 ${items.length} 条会话`}</p><Button size="sm" disabled={loading} onClick={refresh}><RefreshCw aria-hidden="true" className="size-3.5" />刷新记录</Button></div>
@@ -50,28 +51,51 @@ export function TokenConversationsPanel({ tokenId }: { tokenId: string }) {
         {error ? <div role="alert" className="grid gap-2 p-3 text-xs text-app-danger"><p className="break-words">{error}</p><Button size="sm" onClick={refresh}>重新加载</Button></div> : null}
         {hasMore ? <div className="flex justify-center border-t border-app-border p-3"><Button size="sm" disabled={loading} onClick={() => setOffset(nextOffset)}>{loading ? "加载中…" : "加载更多会话"}</Button></div> : null}
       </Card>
-      {selected ? <ConversationMessages key={`${selected.id}-${reload}`} tokenId={tokenId} summary={selected} /> : <Card className="grid min-h-72 place-items-center"><EmptyState title="选择一条会话查看内容" /></Card>}
+      {selected ? <ConversationMessages key={`${selected.id}-${reload}`} tokenId={tokenId} summary={selected} onPreviewChange={onPreviewChange} /> : <Card className="grid min-h-72 place-items-center"><EmptyState title="选择一条会话查看内容" /></Card>}
     </div>
   </section>;
 }
 
-function ConversationMessages({ tokenId, summary }: { tokenId: string; summary: ConversationSummary }) {
+function ConversationMessages({ tokenId, summary, onPreviewChange }: { tokenId: string; summary: ConversationSummary; onPreviewChange?: (open: boolean) => void }) {
   const [detail, setDetail] = useState<ConversationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
-  const [preview, setPreview] = useState<{ url: string; label: string } | null>(null);
+  const [previewFileId, setPreviewFileId] = useState<string | null>(null);
+  useEffect(() => {
+    onPreviewChange?.(Boolean(previewFileId));
+  }, [onPreviewChange, previewFileId]);
+  useEffect(() => () => onPreviewChange?.(false), [onPreviewChange]);
   useEffect(() => {
     const controller = new AbortController();
     setLoading(true);
     setError("");
     setDetail(null);
+    setPreviewFileId(null);
     void api<{ conversation: ConversationDetail }>(`${contentPath(tokenId)}/conversations/${encodeURIComponent(summary.id)}`, { signal: controller.signal })
       .then((data) => { if (!controller.signal.aborted) setDetail(data.conversation); })
       .catch((failure: unknown) => { if (!controller.signal.aborted) setError(errorMessage(failure)); })
       .finally(() => { if (!controller.signal.aborted) setLoading(false); });
     return () => controller.abort();
   }, [tokenId, summary.id, retry]);
+  const previewAssets = useMemo(() => {
+    const seen = new Set<string>();
+    return detail?.messages.flatMap((message) => message.assets).filter((asset) => {
+      if (!asset.file_id || seen.has(asset.file_id)) return false;
+      seen.add(asset.file_id);
+      return true;
+    }) ?? [];
+  }, [detail]);
+  const previewIndex = previewFileId ? previewAssets.findIndex((asset) => asset.file_id === previewFileId) : -1;
+  const previewAsset = previewIndex >= 0 ? previewAssets[previewIndex] : null;
+  const openPreview = (fileId: string) => {
+    setPreviewFileId(fileId);
+    onPreviewChange?.(true);
+  };
+  const closePreview = () => {
+    setPreviewFileId(null);
+    onPreviewChange?.(false);
+  };
   const roles: Record<string, string> = { user: "用户", assistant: "助手", system: "系统", tool: "工具", unknown: "其他" };
   return <Card className="min-w-0 overflow-hidden">
     <div className="border-b border-app-border p-3"><h3 className="break-words text-sm font-medium">{detail?.title || summary.title || "未命名会话"}</h3><p className="mt-1 text-xs text-app-subtle">{formatTime(detail?.update_time || summary.update_time || summary.create_time)}</p></div>
@@ -80,10 +104,22 @@ function ConversationMessages({ tokenId, summary }: { tokenId: string; summary: 
         <div className={cn("max-w-[95%] rounded-lg border border-app-border p-3 sm:max-w-[90%]", message.role === "user" ? "bg-app-primary/10" : "bg-app-muted")}>
           <div className="mb-2 flex flex-wrap items-center gap-2"><Badge>{roles[message.role] || message.author || message.role}</Badge><span className="text-xs text-app-subtle">{formatTime(message.create_time)}</span></div>
           {message.content && !(message.content === "[图片]" && message.assets.length > 0) ? <p className="whitespace-pre-wrap break-words text-sm leading-6 [overflow-wrap:anywhere]">{message.content}</p> : null}
-          {message.assets.length > 0 ? <div className="mt-3 flex flex-wrap gap-2">{message.assets.map((asset) => <TokenContentImage key={asset.file_id} tokenId={tokenId} fileId={asset.file_id} onPreview={setPreview} />)}</div> : null}
+          {message.assets.length > 0 ? <div className="mt-3 flex flex-wrap gap-2">{message.assets.map((asset) => <TokenContentImage key={asset.file_id} tokenId={tokenId} fileId={asset.file_id} onPreview={() => openPreview(asset.file_id)} />)}</div> : null}
         </div>
       </article>) : <EmptyState title="暂无可展示的聊天内容" />}
     </div>
-    <TokenImagePreview image={preview} onClose={() => setPreview(null)} />
+    {previewAsset && previewIndex >= 0 ? <div className="border-t border-app-border p-4">
+      <TokenContentImagePreview
+        key={previewAsset.file_id}
+        tokenId={tokenId}
+        fileId={previewAsset.file_id}
+        label="聊天图片"
+        index={previewIndex}
+        total={previewAssets.length}
+        onPrevious={previewIndex > 0 ? () => openPreview(previewAssets[previewIndex - 1].file_id) : undefined}
+        onNext={previewIndex < previewAssets.length - 1 ? () => openPreview(previewAssets[previewIndex + 1].file_id) : undefined}
+        onClose={closePreview}
+      />
+    </div> : null}
   </Card>;
 }

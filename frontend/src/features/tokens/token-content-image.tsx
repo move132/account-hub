@@ -1,8 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
-import { Button, Dialog, Spinner } from "../../components/ui";
+import { Button, ImagePreview, Spinner, type ImagePreviewItem } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { contentPath } from "./content-types";
+
+export async function fetchTokenImage(tokenId: string, fileId: string, signal?: AbortSignal): Promise<string> {
+  const data = await api<{ image: { data_url: string } }>(`${contentPath(tokenId)}/files/${encodeURIComponent(fileId)}/image`, { signal });
+  if (!/^data:image\/(png|jpeg|webp|gif|avif);base64,/.test(data.image.data_url)) throw new Error("图片格式不支持预览");
+  return data.image.data_url;
+}
 
 export function TokenContentImage({ tokenId, fileId, label = "聊天图片", onPreview }: {
   tokenId: string;
@@ -35,10 +41,9 @@ export function TokenContentImage({ tokenId, fileId, label = "聊天图片", onP
     const controller = new AbortController();
     setError("");
     setURL("");
-    void api<{ image: { data_url: string } }>(`${contentPath(tokenId)}/files/${encodeURIComponent(fileId)}/image`, { signal: controller.signal })
-      .then((data) => {
-        if (!/^data:image\/(png|jpeg|webp|gif|avif);base64,/.test(data.image.data_url)) throw new Error("图片格式不支持预览");
-        if (!controller.signal.aborted) setURL(data.image.data_url);
+    void fetchTokenImage(tokenId, fileId, controller.signal)
+      .then((dataURL) => {
+        if (!controller.signal.aborted) setURL(dataURL);
       })
       .catch((failure: unknown) => { if (!controller.signal.aborted) setError(errorMessage(failure)); });
     return () => controller.abort();
@@ -54,8 +59,41 @@ export function TokenContentImage({ tokenId, fileId, label = "聊天图片", onP
   </div>;
 }
 
-export function TokenImagePreview({ image, onClose }: { image: { url: string; label: string } | null; onClose: () => void }) {
-  return <Dialog open={Boolean(image)} onOpenChange={(open) => { if (!open) onClose(); }} title="图片预览" description={image?.label} contentClassName="w-[min(96vw,1100px)]">
-    {image ? <img src={image.url} alt={image.label} width={1200} height={800} className="max-h-[70vh] w-full rounded-md object-contain" /> : null}
-  </Dialog>;
+export function TokenImagePreview({ image, onClose, index = 0, total = 1, onPrevious, onNext }: {
+  image: ImagePreviewItem | null;
+  onClose: () => void;
+  index?: number;
+  total?: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+}) {
+  return <ImagePreview image={image} index={index} total={total} onPrevious={onPrevious} onNext={onNext} onClose={onClose} />;
+}
+
+export function TokenContentImagePreview({ tokenId, fileId, label, index = 0, total = 1, onPrevious, onNext, onClose }: {
+  tokenId: string;
+  fileId: string;
+  label: string;
+  index?: number;
+  total?: number;
+  onPrevious?: () => void;
+  onNext?: () => void;
+  onClose: () => void;
+}) {
+  const [url, setURL] = useState("");
+  const [error, setError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    setURL("");
+    setError("");
+    void fetchTokenImage(tokenId, fileId, controller.signal)
+      .then((dataURL) => {
+        if (!controller.signal.aborted) setURL(dataURL);
+      })
+      .catch((failure: unknown) => {
+        if (!controller.signal.aborted) setError(errorMessage(failure));
+      });
+    return () => controller.abort();
+  }, [tokenId, fileId]);
+  return <ImagePreview image={url ? { url, label } : null} index={index} total={total} loading={!url && !error} error={error} onPrevious={onPrevious} onNext={onNext} onClose={onClose} />;
 }

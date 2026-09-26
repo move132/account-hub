@@ -2,13 +2,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
-import { Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Progress, Spinner, useToast, type Column } from "../../components/ui";
+import { Badge, Button, Card, ConfirmDialog, DataTable, Progress, Spinner, useToast, type Column } from "../../components/ui";
 import { api, errorMessage, jsonBody } from "../../lib/api";
 import { canDeleteLibraryFile, contentPath, formatBytes, mergeContentItems, usagePercentage, type LibraryDeleteResult, type LibraryFile, type LibraryPage, type StorageUsage } from "./content-types";
-import { TokenContentImage, TokenImagePreview } from "./token-content-image";
+import { TokenContentImagePreview } from "./token-content-image";
 import { formatTime } from "./types";
 
-export function TokenStoragePanel({ tokenId }: { tokenId: string }) {
+export function TokenStoragePanel({ tokenId, onPreviewChange }: { tokenId: string; onPreviewChange?: (open: boolean) => void }) {
   const [usage, setUsage] = useState<StorageUsage | null>(null);
   const [usageError, setUsageError] = useState("");
   const [usageLoading, setUsageLoading] = useState(true);
@@ -22,10 +22,14 @@ export function TokenStoragePanel({ tokenId }: { tokenId: string }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [failures, setFailures] = useState<LibraryDeleteResult["failures"]>([]);
-  const [previewFile, setPreviewFile] = useState<LibraryFile | null>(null);
-  const [preview, setPreview] = useState<{ url: string; label: string } | null>(null);
+  const [previewFileId, setPreviewFileId] = useState<string | null>(null);
   const mutation = useRef<AbortController | null>(null);
   const { notify } = useToast();
+
+  useEffect(() => {
+    onPreviewChange?.(Boolean(previewFileId));
+  }, [onPreviewChange, previewFileId]);
+  useEffect(() => () => onPreviewChange?.(false), [onPreviewChange]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -57,7 +61,15 @@ export function TokenStoragePanel({ tokenId }: { tokenId: string }) {
   }, [tokenId, cursor, reload]);
 
   useEffect(() => () => mutation.current?.abort(), []);
-  const refresh = () => { setCursor(null); setReload((value) => value + 1); };
+  const openPreview = (fileId: string) => {
+    setPreviewFileId(fileId);
+    onPreviewChange?.(true);
+  };
+  const closePreview = () => {
+    setPreviewFileId(null);
+    onPreviewChange?.(false);
+  };
+  const refresh = () => { setCursor(null); closePreview(); setReload((value) => value + 1); };
   const deleteFiles = async () => {
     if (deleting || loading || selected.size === 0 || selected.size > 100) return;
     const controller = new AbortController();
@@ -82,13 +94,15 @@ export function TokenStoragePanel({ tokenId }: { tokenId: string }) {
     }
   };
   const columns = useMemo<Array<Column<LibraryFile>>>(() => [
-    { key: "name", header: "名称", render: (file) => <Button variant="ghost" size="sm" className="max-w-sm !justify-start px-0" disabled={!file.file_id} onClick={() => setPreviewFile(file)}>
+    { key: "name", header: "名称", render: (file) => <Button variant="ghost" size="sm" className="max-w-sm !justify-start px-0" disabled={!file.file_id} onClick={() => openPreview(file.id)}>
       <ImageIcon aria-hidden="true" className="size-4 shrink-0 text-app-subtle" /><span className="truncate" title={file.name}>{file.name || "未命名图片"}</span>
     </Button> },
     { key: "updated", header: "修改时间", render: (file) => <span className="text-xs text-app-subtle">{formatTime(file.updated_at)}</span> },
     { key: "size", header: "大小", render: (file) => <span className="text-xs">{formatBytes(file.file_size_bytes)}</span> },
   ], []);
   const imageCount = usage?.breakdown_by_file_type.find((item) => item.file_type === "image")?.count;
+  const previewIndex = previewFileId ? files.findIndex((file) => file.id === previewFileId) : -1;
+  const previewFile = previewIndex >= 0 ? files[previewIndex] : null;
 
   return <section aria-label="账号存储空间" className="grid min-w-0 grid-cols-1 gap-4">
     <div className="flex flex-wrap items-center justify-between gap-3">
@@ -111,9 +125,16 @@ export function TokenStoragePanel({ tokenId }: { tokenId: string }) {
     </Card>
     {failures.length > 0 ? <div role="alert" className="rounded-md border border-app-danger/30 p-3 text-sm"><p className="font-medium text-app-danger">以下图片未删除或结果待确认</p><ul className="mt-2 list-inside list-disc space-y-1 text-xs text-app-subtle">{failures.map((failure) => <li key={failure.library_file_id}>{failure.file_name}：{failure.message}</li>)}</ul></div> : null}
     <ConfirmDialog open={confirmOpen} onOpenChange={setConfirmOpen} title="删除图片" description={`确定删除选中的 ${selected.size} 张图片吗？它们将从该账号的 ChatGPT 资料库中移除。`} confirmLabel="确认删除" danger onConfirm={() => { setConfirmOpen(false); void deleteFiles(); }} />
-    <Dialog open={Boolean(previewFile)} onOpenChange={(open) => { if (!open) setPreviewFile(null); }} title="图片文件" description={previewFile?.name}>
-      {previewFile ? <div className="grid justify-center gap-3"><TokenContentImage key={previewFile.id} tokenId={tokenId} fileId={previewFile.file_id} label={previewFile.name} onPreview={setPreview} /><p className="text-center text-xs text-app-subtle">点击图片放大查看</p></div> : null}
-    </Dialog>
-    <TokenImagePreview image={preview} onClose={() => setPreview(null)} />
+    {previewFile && previewIndex >= 0 ? <TokenContentImagePreview
+      key={previewFile.id}
+      tokenId={tokenId}
+      fileId={previewFile.file_id}
+      label={previewFile.name || "图片"}
+      index={previewIndex}
+      total={files.length}
+      onPrevious={previewIndex > 0 ? () => openPreview(files[previewIndex - 1].id) : undefined}
+      onNext={previewIndex < files.length - 1 ? () => openPreview(files[previewIndex + 1].id) : undefined}
+      onClose={closePreview}
+    /> : null}
   </section>;
 }
