@@ -116,7 +116,7 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
       return;
     }
     if (!hasMoreAssets || loading) return;
-    let more = hasMoreAssets;
+    let more: boolean = hasMoreAssets;
     for (let page = 0; page < 20 && more; page += 1) {
       const added = await loadMore();
       const nextImage = added.media.find((item) => item.type === "image");
