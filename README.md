@@ -64,11 +64,18 @@ pnpm build
 生产构建：
 
 ```powershell
-docker compose build
+docker compose -f compose-local.yaml build
+docker compose -f compose-local.yaml up -d
+```
+
+使用 GHCR 中的预构建镜像：
+
+```powershell
+docker compose pull
 docker compose up -d
 ```
 
-`compose.yaml` 只属于本项目，不会调用或修改仓库根目录的旧 Compose 配置。
+`compose.yaml` 使用 GHCR 预构建镜像，`compose-local.yaml` 用于本地构建；两个配置都只属于本项目，不会调用或修改仓库根目录的旧 Compose 配置。
 
 ## 导入与导出
 
