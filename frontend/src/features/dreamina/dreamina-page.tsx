@@ -7,7 +7,7 @@ import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea, TooltipText, cn, type Column, useToast } from "../../components/ui";
-import { api, downloadApiFile, errorMessage, jsonBody } from "../../lib/api";
+import { api, createRequestId, downloadApiFile, errorMessage, jsonBody } from "../../lib/api";
 import { saveBlob } from "../../lib/download";
 import { parsePageSize } from "../../lib/pagination";
 import { accountStatusLabel, checkStateLabel } from "../../lib/status-labels";
@@ -120,7 +120,7 @@ export function DreaminaPage() {
         await api(`/api/v1/dreamina/accounts/${editing.id}`, { method: "PATCH", ...jsonBody(payload) });
       }
       else
-        await api("/api/v1/dreamina/accounts", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody(form) });
+        await api("/api/v1/dreamina/accounts", { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody(form) });
       setFormOpen(false);
       notify(editing ? "即梦账号已更新" : "即梦账号已创建");
       await load();
@@ -146,7 +146,7 @@ export function DreaminaPage() {
   };
   const action = async (item: DreaminaView, name: "checks" | "refreshes") => {
     try {
-      await api(`/api/v1/dreamina/accounts/${item.id}/${name}`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody({}) });
+      await api(`/api/v1/dreamina/accounts/${item.id}/${name}`, { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody({}) });
       notify(name === "checks" ? "检查完成" : "刷新完成");
       await load();
     }
@@ -161,7 +161,7 @@ export function DreaminaPage() {
           job: {
             id: string;
           };
-        } & Record<string, unknown>>("/api/v1/dreamina-batch-jobs", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody({ action: actionName, ids: [...selected] }) });
+        } & Record<string, unknown>>("/api/v1/dreamina-batch-jobs", { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody({ action: actionName, ids: [...selected] }) });
         notify("批量任务已创建", data.job.id, "info");
         setSelected(new Set());
       }

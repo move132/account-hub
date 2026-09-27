@@ -3,7 +3,7 @@ import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import { Badge, Button, Card, ConfirmDialog, DataTable, Progress, Spinner, useToast, type Column } from "../../components/ui";
-import { api, errorMessage, jsonBody } from "../../lib/api";
+import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
 import { canDeleteLibraryFile, contentPath, formatBytes, mergeContentItems, usagePercentage, type LibraryDeleteResult, type LibraryFile, type LibraryPage, type StorageUsage } from "./content-types";
 import { TokenContentImagePreview } from "./token-content-image";
 import { formatTime } from "./types";
@@ -80,7 +80,7 @@ export function TokenStoragePanel({ tokenId, onPreviewChange }: { tokenId: strin
       const chosen = files.filter((file) => selected.has(file.id) && canDeleteLibraryFile(file));
       const result = await api<LibraryDeleteResult>(`${contentPath(tokenId)}/library/deletions`, {
         method: "POST", signal: controller.signal,
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": createRequestId() },
         ...jsonBody({ files: chosen.map((file) => ({ library_file_id: file.id, file_id: file.file_id, parent_directory_id: file.parent_directory_id, file_name: file.name })) }),
       });
       if (controller.signal.aborted) return;

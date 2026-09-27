@@ -2,7 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import { Badge, Button, Card, CardHeader, PageHeader, Spinner, useToast } from "../../components/ui";
-import { api, errorMessage, jsonBody } from "../../lib/api";
+import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel, operationLabel, resultStatusLabel } from "../../lib/status-labels";
 import { formatTime, type Attempt, type TokenView } from "./types";
 const TokenContentDialog = lazy(() => import("./token-content-dialog"));
@@ -39,7 +39,7 @@ export function TokenDetailPage() {
     try {
       await api(`/api/v1/tokens/${id}/${action}`, {
         method: "POST",
-        headers: { "Idempotency-Key": crypto.randomUUID() },
+        headers: { "Idempotency-Key": createRequestId() },
         ...jsonBody({}),
       });
       notify("操作完成");

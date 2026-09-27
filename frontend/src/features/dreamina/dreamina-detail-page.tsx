@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge, Button, Card, CardHeader, ConfirmDialog, PageHeader, Spinner, useToast } from "../../components/ui";
-import { api, errorMessage, jsonBody } from "../../lib/api";
+import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel, operationLabel, resultStatusLabel } from "../../lib/status-labels";
 import { formatTime, type Attempt, type DreaminaView } from "./types";
 import { DreaminaAssetsDialog } from "./dreamina-assets-dialog";
@@ -38,7 +38,7 @@ export function DreaminaDetailPage() {
   useEffect(() => { void load(); }, [load]);
   const run = async (action: "checks" | "refreshes") => {
     try {
-      await api(`/api/v1/dreamina/accounts/${id}/${action}`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody({}) });
+      await api(`/api/v1/dreamina/accounts/${id}/${action}`, { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody({}) });
       notify("操作完成");
       await load();
     }
@@ -60,7 +60,7 @@ export function DreaminaDetailPage() {
   };
   const claim = async () => {
     try {
-      await api(`/api/v1/dreamina/accounts/${id}/credit-claims`, { method: "POST", headers: { "Idempotency-Key": claimKey || crypto.randomUUID() }, ...jsonBody({}) });
+      await api(`/api/v1/dreamina/accounts/${id}/credit-claims`, { method: "POST", headers: { "Idempotency-Key": claimKey || createRequestId() }, ...jsonBody({}) });
       notify("积分领取成功");
       setClaimOpen(false);
       await load();
@@ -100,7 +100,7 @@ export function DreaminaDetailPage() {
         </dl>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={!item.has_session_id} onClick={() => void queryCredit()}>查询积分</Button>
-          <Button size="sm" disabled={!item.has_session_id} onClick={() => { setClaimKey(crypto.randomUUID()); setClaimOpen(true); }}>领取积分</Button>
+          <Button size="sm" disabled={!item.has_session_id} onClick={() => { setClaimKey(createRequestId()); setClaimOpen(true); }}>领取积分</Button>
           <Button size="sm" disabled={!item.has_session_id} onClick={() => setAssetsOpen(true)}>查看历史作品</Button>
         </div>
       </div>

@@ -6,7 +6,7 @@ import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea, cn, type Column, useToast } from "../../components/ui";
-import { api, downloadApiFile, errorMessage, jsonBody } from "../../lib/api";
+import { api, createRequestId, downloadApiFile, errorMessage, jsonBody } from "../../lib/api";
 import { saveBlob } from "../../lib/download";
 import { parsePageSize } from "../../lib/pagination";
 import { accountStatusLabel, checkStateLabel } from "../../lib/status-labels";
@@ -123,7 +123,7 @@ export function TokensPage() {
         await api(`/api/v1/tokens/${editing.id}`, { method: "PATCH", ...jsonBody(payload) });
       }
       else {
-        await api("/api/v1/tokens", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody(form) });
+        await api("/api/v1/tokens", { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody(form) });
       }
       setFormOpen(false);
       notify(editing ? "Token 已更新" : "Token 已创建");
@@ -150,7 +150,7 @@ export function TokensPage() {
   };
   const action = async (item: TokenView, name: "checks" | "refreshes") => {
     try {
-      await api(`/api/v1/tokens/${item.id}/${name}`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody({}) });
+      await api(`/api/v1/tokens/${item.id}/${name}`, { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody({}) });
       notify(name === "checks" ? "检查完成" : "刷新完成");
       await load();
     }
@@ -165,7 +165,7 @@ export function TokensPage() {
           job: {
             id: string;
           };
-        } & Record<string, unknown>>("/api/v1/token-batch-jobs", { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, ...jsonBody({ action: actionName, ids: [...selected] }) });
+        } & Record<string, unknown>>("/api/v1/token-batch-jobs", { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody({ action: actionName, ids: [...selected] }) });
         notify("批量任务已创建", data.job.id, "info");
         setSelected(new Set());
       }

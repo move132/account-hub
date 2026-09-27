@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import * as Tabs from "radix-ui/tabs";
 import { Badge, Button, DataTable, Dialog, Field, FileInput, Pagination, Textarea, type Column, useToast } from "../../components/ui";
-import { api, errorMessage } from "../../lib/api";
+import { api, createRequestId, errorMessage } from "../../lib/api";
 
 interface PreviewRow {
   line: number;
@@ -93,7 +93,7 @@ export function TokenImportDialog({ onClose, onImported }: {
         return;
       }
       const result = await api<ImportResult>("/api/v1/token-imports?dry_run=false", {
-        method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() }, body: requestBody(),
+        method: "POST", headers: { "Idempotency-Key": createRequestId() }, body: requestBody(),
       });
       notify(result.job ? "Token 导入任务已创建" : "重复 Token 已跳过",
         result.job ? `导入 ${result.accepted} 条，跳过 ${result.skipped} 条重复记录` : `已跳过 ${result.skipped} 条重复记录`);
