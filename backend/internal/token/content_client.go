@@ -31,15 +31,20 @@ func invalidContent(message string) error {
 }
 
 func (c *Client) contentRequest(ctx context.Context, accessToken, method, path string, query url.Values, referer string) (*http.Response, error) {
+	target := c.chatGPTBase + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	return c.contentRequestURL(ctx, accessToken, method, target, referer)
+}
+
+func (c *Client) contentRequestURL(ctx context.Context, accessToken, method, target, referer string) (*http.Response, error) {
 	factory := func(_ *http.Client) (*http.Request, error) {
-		target := c.chatGPTBase + path
-		if len(query) > 0 {
-			target += "?" + query.Encode()
-		}
 		request, err := http.NewRequest(method, target, nil)
 		if err != nil {
 			return nil, err
 		}
+		path := request.URL.Path
 		request.Header.Set("Authorization", bearer(accessToken))
 		request.Header.Set("Accept", "*/*")
 		if path == "/backend-api/estuary/content" {
@@ -301,7 +306,8 @@ func (c *Client) ContentImage(ctx context.Context, accessToken, fileID string) (
 	if err != nil || baseErr != nil || parsed.User != nil || parsed.Scheme != base.Scheme || parsed.Host != base.Host || parsed.Path != "/backend-api/estuary/content" || parsed.Fragment != "" {
 		return ContentImage{}, invalidContent("上游返回了不受支持的图片地址")
 	}
-	response, err = c.contentRequest(ctx, accessToken, http.MethodGet, parsed.Path, parsed.Query(), "/")
+	// Signed download URLs must keep their original query bytes and parameter order.
+	response, err = c.contentRequestURL(ctx, accessToken, http.MethodGet, target, "/")
 	if err != nil {
 		return ContentImage{}, err
 	}

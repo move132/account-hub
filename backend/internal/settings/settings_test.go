@@ -21,7 +21,7 @@ func TestDefaultsAndValidation(t *testing.T) {
 	if err := repository.EnsureDefaults(ctx); err != nil {
 		t.Fatal(err)
 	}
-	items, err := repository.List(ctx, true)
+	items, err := repository.List(ctx)
 	if err != nil {
 		t.Fatal(err)
 	}

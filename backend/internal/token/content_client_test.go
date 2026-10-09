@@ -233,6 +233,39 @@ func TestContentImageAndRedirectProtection(t *testing.T) {
 	}
 }
 
+func TestContentImagePreservesSignedDownloadURL(t *testing.T) {
+	for _, field := range []string{"download_url", "url"} {
+		t.Run(field, func(t *testing.T) {
+			// The signature covers the original parameter order and percent encoding.
+			const signedPath = "/backend-api/estuary/content?id=file_abc&ts=1700000000&sig=private%2fsignature%3d&name=image%20one.png&part=2&part=1"
+			var downloads atomic.Int32
+			client, _, record := contentClientFixture(t, func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/backend-api/files/download/file_abc":
+					_ = json.NewEncoder(w).Encode(map[string]string{field: "http://" + r.Host + signedPath})
+				case "/backend-api/estuary/content":
+					downloads.Add(1)
+					if r.RequestURI != signedPath {
+						http.Error(w, "invalid URL signature", http.StatusForbidden)
+						return
+					}
+					if r.Header.Get("Authorization") != "Bearer private-access" || r.Header.Get("X-Openai-Target-Path") != r.URL.Path || r.Header.Get("X-Openai-Target-Route") != r.URL.Path {
+						t.Error("signed image request lost authorization or route headers")
+					}
+					w.Header().Set("Content-Type", "image/png")
+					_, _ = w.Write([]byte{137, 80, 78, 71})
+				default:
+					http.NotFound(w, r)
+				}
+			})
+			image, err := client.ContentImage(context.Background(), record.AccessToken, "file_abc")
+			if err != nil || image.DataURL != "data:image/png;base64,iVBORw==" || downloads.Load() != 1 {
+				t.Fatalf("signed image download failed: downloads=%d err=%v", downloads.Load(), err)
+			}
+		})
+	}
+}
+
 func TestContentHandlerValidationAndErrors(t *testing.T) {
 	var calls atomic.Int32
 	_, handler, record := contentClientFixture(t, func(w http.ResponseWriter, _ *http.Request) { calls.Add(1); w.WriteHeader(http.StatusForbidden) })

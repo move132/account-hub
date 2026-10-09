@@ -8,7 +8,8 @@ import { TokenStoragePanel } from "./token-storage-panel";
 
 export default function TokenContentDialog({ tokenId, label, onClose }: { tokenId: string; label: string; onClose: () => void }) {
   const [previewOpen, setPreviewOpen] = useState(false);
-  return <Dialog open modal={!previewOpen} onOpenChange={(open) => { if (!open && previewOpen) return; if (!open) onClose(); }} title="存储与聊天" description={label} contentClassName={previewOpen ? "hidden" : "w-[min(96vw,1200px)]"}>
+  // Changing modal mode remounts the dialog contents and resets the loaded panels.
+  return <Dialog open onOpenChange={(open) => { if (!open && previewOpen) return; if (!open) onClose(); }} title="存储与聊天" description={label} contentClassName={previewOpen ? "hidden" : "w-[min(96vw,1200px)]"}>
     <Tabs.Root defaultValue="storage" className="min-w-0">
       <Tabs.List aria-label="账号内容" className="mb-3 flex gap-3 border-b border-app-border">
         <Tabs.Trigger value="storage" asChild>

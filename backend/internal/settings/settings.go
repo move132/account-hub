@@ -85,7 +85,7 @@ func (r *Repository) EnsureDefaults(ctx context.Context) error {
 	return nil
 }
 
-func (r *Repository) List(ctx context.Context, maskSecrets bool) ([]Item, error) {
+func (r *Repository) List(ctx context.Context) ([]Item, error) {
 	rows, err := r.db.QueryContext(ctx, "SELECT key, value, value_type FROM settings ORDER BY key")
 	if err != nil {
 		return nil, err
@@ -105,9 +105,6 @@ func (r *Repository) List(ctx context.Context, maskSecrets bool) ([]Item, error)
 		if err != nil {
 			return nil, fmt.Errorf("decode setting %s: %w", key, err)
 		}
-		if maskSecrets && key == "proxy_url" && value != "" {
-			value = "••••••••"
-		}
 		values[key] = value
 	}
 	items := make([]Item, 0, len(definitions))
@@ -122,7 +119,7 @@ func (r *Repository) List(ctx context.Context, maskSecrets bool) ([]Item, error)
 }
 
 func (r *Repository) Values(ctx context.Context) (map[string]any, error) {
-	items, err := r.List(ctx, false)
+	items, err := r.List(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -198,7 +195,7 @@ func (r *Repository) Update(ctx context.Context, updates map[string]any) ([]Item
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return r.List(ctx, true)
+	return r.List(ctx)
 }
 
 func (r *Repository) CleanupHistory(ctx context.Context, before int64) (CleanupResult, error) {

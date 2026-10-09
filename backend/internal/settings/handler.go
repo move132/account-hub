@@ -19,7 +19,7 @@ func NewHandler(repository *Repository, auditRepository *audit.Repository) *Hand
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
-	items, err := h.repository.List(r.Context(), true)
+	items, err := h.repository.List(r.Context())
 	if err != nil {
 		httpserver.Error(w, r, http.StatusInternalServerError, "SETTINGS_READ_FAILED", "读取设置失败", nil)
 		return

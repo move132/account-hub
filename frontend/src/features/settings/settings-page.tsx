@@ -163,12 +163,8 @@ function SettingControl({ item, value, onChange }: {
       </div>
       <Switch checked={Boolean(value)} onCheckedChange={onChange} />
     </div>;
-  const isProxy = item.key === "proxy_url";
   return <Field label={item.label} hint={`${item.key}${item.min !== undefined ? ` · ${item.min}–${item.max}` : ""}`}>
-    <Input name={item.key} autoComplete="off" type={item.type === "integer" ? "number" : "text"} min={item.min} max={item.max} value={String(value ?? "")} placeholder={isProxy && value === "••••••••" ? "已配置，输入新值以替换" : undefined} onFocus={() => {
-      if (isProxy && value === "••••••••")
-        onChange("");
-    }} onChange={(event) => onChange(item.type === "integer" ? Number(event.target.value) : event.target.value)} />
+    <Input name={item.key} autoComplete="off" type={item.type === "integer" ? "number" : "text"} min={item.min} max={item.max} value={String(value ?? "")} onChange={(event) => onChange(item.type === "integer" ? Number(event.target.value) : event.target.value)} />
   </Field>;
 }
 
