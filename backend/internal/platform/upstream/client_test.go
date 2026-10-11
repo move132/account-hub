@@ -27,7 +27,7 @@ func TestClientRetriesTransientFailure(t *testing.T) {
 	}))
 	defer server.Close()
 	client := testClient(t, time.Second, 1)
-	response, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
+	response, err := client.Do(context.Background(), func() (*http.Request, error) {
 		return http.NewRequest(http.MethodGet, server.URL, nil)
 	})
 	if err != nil {
@@ -51,7 +51,7 @@ func TestClientAllowsResponseBodyReadAfterDoReturns(t *testing.T) {
 	}))
 	defer server.Close()
 	client := testClient(t, time.Second, 0)
-	response, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
+	response, err := client.Do(context.Background(), func() (*http.Request, error) {
 		return http.NewRequest(http.MethodGet, server.URL, nil)
 	})
 	if err != nil {
@@ -72,7 +72,7 @@ func TestClientClassifiesCredentialsAndTimeout(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusUnauthorized) }))
 		defer server.Close()
 		client := testClient(t, time.Second, 2)
-		_, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) { return http.NewRequest(http.MethodGet, server.URL, nil) })
+		_, err := client.Do(context.Background(), func() (*http.Request, error) { return http.NewRequest(http.MethodGet, server.URL, nil) })
 		if Code(err) != InvalidCredentials {
 			t.Fatalf("code=%s err=%v", Code(err), err)
 		}
@@ -81,7 +81,7 @@ func TestClientClassifiesCredentialsAndTimeout(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusTooManyRequests) }))
 		defer server.Close()
 		client := testClient(t, time.Second, 0)
-		_, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) { return http.NewRequest(http.MethodGet, server.URL, nil) })
+		_, err := client.Do(context.Background(), func() (*http.Request, error) { return http.NewRequest(http.MethodGet, server.URL, nil) })
 		if Code(err) != RateLimited {
 			t.Fatalf("code=%s err=%v", Code(err), err)
 		}
@@ -93,7 +93,7 @@ func TestClientClassifiesCredentialsAndTimeout(t *testing.T) {
 		}))
 		defer server.Close()
 		client := testClient(t, 20*time.Millisecond, 2)
-		_, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) { return http.NewRequest(http.MethodGet, server.URL, nil) })
+		_, err := client.Do(context.Background(), func() (*http.Request, error) { return http.NewRequest(http.MethodGet, server.URL, nil) })
 		if Code(err) != Timeout {
 			t.Fatalf("code=%s err=%v", Code(err), err)
 		}
@@ -129,7 +129,7 @@ func TestClientClassifiesAccessRejections(t *testing.T) {
 			defer server.Close()
 			var logs bytes.Buffer
 			client := testClient(t, time.Second, 2).WithLogger(slog.New(slog.NewJSONHandler(&logs, nil)))
-			response, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
+			response, err := client.Do(context.Background(), func() (*http.Request, error) {
 				request, err := http.NewRequest(http.MethodGet, server.URL+"?token=private-query-token", nil)
 				if err == nil {
 					request.Header.Set("Authorization", "Bearer private-access-token")
@@ -178,7 +178,7 @@ func TestDoOnceDoesNotRetryMutation(t *testing.T) {
 	}))
 	defer server.Close()
 	client := testClient(t, time.Second, 2)
-	_, err := client.DoOnce(context.Background(), func(_ *http.Client) (*http.Request, error) {
+	_, err := client.DoOnce(context.Background(), func() (*http.Request, error) {
 		return http.NewRequest(http.MethodPost, server.URL, strings.NewReader("mutation"))
 	})
 	if Code(err) != Unavailable || calls.Load() != 1 {

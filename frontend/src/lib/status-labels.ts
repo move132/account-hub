@@ -105,31 +105,3 @@ export function auditActionLabel(value: string) {
 export function targetKindLabel(value: string) {
   return targetKindLabels[value] || value || "—";
 }
-
-export function localizeStatusPreview(value: unknown): unknown {
-  if (Array.isArray(value)) {
-    return value.map(localizeStatusPreview);
-  }
-  if (!value || typeof value !== "object") {
-    return value;
-  }
-  return Object.fromEntries(Object.entries(value).map(([key, item]) => {
-    if (typeof item === "string") {
-      switch (key) {
-        case "status":
-          return [key, accountStatusLabels[item] || resultStatusLabels[item] || item];
-        case "check_state":
-          return [key, checkStateLabel(item)];
-        case "state":
-          return [key, resultStatusLabel(item)];
-        case "operation":
-          return [key, operationLabel(item)];
-        case "action":
-          return [key, auditActionLabel(item)];
-        case "target_kind":
-          return [key, targetKindLabel(item)];
-      }
-    }
-    return [key, localizeStatusPreview(item)];
-  }));
-}

@@ -12,7 +12,6 @@ import (
 	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/httpserver"
 	"account-hub/internal/platform/principal"
-	"account-hub/internal/platform/security"
 )
 
 const (
@@ -209,12 +208,4 @@ func (h *Handler) clearFailures(key string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.attempts, key)
-}
-
-func SessionHashFromRequest(r *http.Request) string {
-	cookie, err := r.Cookie(sessionCookie)
-	if err != nil {
-		return ""
-	}
-	return security.HashToken(cookie.Value)
 }

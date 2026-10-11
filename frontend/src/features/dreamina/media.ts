@@ -1,20 +1,15 @@
 export interface MediaItem { id: string; type: "image" | "video"; url: string }
-export interface HistoryResource { id: string; imageUrl: string }
 export interface HistoryItem {
   id: string
   type: "image" | "video"
   prompt: string
   modelName: string
-  resources: HistoryResource[]
+  resourceCount: number
   media: MediaItem[]
 }
 
 export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {}
-}
-
-export function normalizeAssets(payload: Record<string, unknown>): MediaItem[] {
-  return flattenHistoryMedia(normalizeHistoryItems(payload))
 }
 
 export function normalizeHistoryItems(payload: Record<string, unknown>): HistoryItem[] {
@@ -39,20 +34,20 @@ export function normalizeHistoryItems(payload: Record<string, unknown>): History
       if (safeSource) media.push({ id: `${kind}-${groupId}-${index}`, type: kind, url: safeSource })
     })
     if (media.length === 0) return
-    const resources = (Array.isArray(container.resources) ? container.resources : []).map((rawResource) => {
+    let resourceCount = 0
+    for (const rawResource of Array.isArray(container.resources) ? container.resources : []) {
       const resource = asRecord(rawResource)
       const imageInfo = asRecord(resource.image_info)
-      return {
-        id: stringValue(imageInfo.image_uri) || identifier(resource.id, ""),
-        imageUrl: safeMediaURL(stringValue(imageInfo.image_url) || stringValue(resource.image_url)),
-      }
-    }).filter((resource) => resource.id || resource.imageUrl)
+      const id = stringValue(imageInfo.image_uri) || identifier(resource.id, "")
+      const imageUrl = safeMediaURL(stringValue(imageInfo.image_url) || stringValue(resource.image_url))
+      if (id || imageUrl) resourceCount += 1
+    }
     history.push({
       id: groupId,
       type: kind,
       prompt: normalizePrompt(stringValue(container.history_group_key)),
       modelName: stringValue(asRecord(container.model_info).model_name),
-      resources,
+      resourceCount,
       media,
     })
   })
@@ -71,11 +66,6 @@ export function mergeHistoryItems(current: HistoryItem[], next: HistoryItem[]) {
     seen.add(key)
     return true
   })
-}
-
-export function mergeMedia(current: MediaItem[], next: MediaItem[]) {
-  const seen = new Set(current.map((item) => item.id))
-  return [...current, ...next.filter((item) => !seen.has(item.id))]
 }
 
 function asRecordArray(value: unknown): Record<string, unknown>[] { return Array.isArray(value) ? value.map(asRecord) : [] }

@@ -6,7 +6,14 @@ import Info from "lucide-react/dist/esm/icons/info.mjs";
 import TriangleAlert from "lucide-react/dist/esm/icons/triangle-alert.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
 import { cn } from "./primitives";
-import { sanitizeToastText } from "./toast-text";
+const internalIdPattern = /(?:\s*·\s*)?(?:req|job)_[a-z0-9_-]+/gi;
+function sanitizeToastText(value?: string) {
+  if (!value)
+    return undefined;
+  const sanitized = value.replace(internalIdPattern, "").replace(/\s{2,}/g, " ").trim();
+  return sanitized || undefined;
+}
+
 export type ToastTone = "info" | "success" | "warning" | "danger";
 interface Notice {
   id: number;

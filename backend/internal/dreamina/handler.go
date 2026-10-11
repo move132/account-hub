@@ -1,9 +1,11 @@
 package dreamina
 
 import (
-	"account-hub/internal/platform/apperror"
 	"archive/zip"
 	"bytes"
+	"context"
+	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +16,9 @@ import (
 
 	"account-hub/internal/audit"
 	"account-hub/internal/auth"
+	"account-hub/internal/idempotency"
 	"account-hub/internal/job"
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/httpserver"
 	"account-hub/internal/platform/security"
 	"account-hub/internal/platform/upstream"
@@ -63,6 +67,24 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	}
 	h.log(r, "dreamina_create", item.ID, "创建即梦账号")
 	httpserver.Write(w, http.StatusCreated, map[string]any{"account": item}, "创建成功")
+}
+
+// create is the HTTP application command. The repository receives a transaction
+// callback and remains independent of response envelopes and idempotency records.
+func (h *Handler) create(ctx context.Context, input CreateInput) (View, error) {
+	if _, ok := idempotency.RecordFromContext(ctx); !ok {
+		return h.service.Create(ctx, input)
+	}
+	return h.service.createWithCommit(ctx, input, func(ctx context.Context, tx *sql.Tx, view View) error {
+		body, err := json.Marshal(httpserver.Response{Code: http.StatusCreated, Success: true, Data: map[string]any{"account": view}, Msg: "创建成功", TS: h.service.now().UTC().UnixMilli()})
+		if err != nil {
+			return err
+		}
+		return idempotency.CompleteResultTx(ctx, tx, idempotency.Result{
+			Status: http.StatusCreated, Body: string(body) + "\n", Headers: http.Header{"Content-Type": []string{"application/json; charset=utf-8"}},
+			ResourceType: "dreamina", ResourceID: view.ID,
+		})
+	})
 }
 
 func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {

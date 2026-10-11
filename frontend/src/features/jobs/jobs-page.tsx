@@ -2,9 +2,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import Eye from "lucide-react/dist/esm/icons/eye.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
-import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, PageHeader, Pagination, Progress, Spinner, type Column, useToast } from "../../components/ui";
+import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, PageHeader, Pagination, Progress, Spinner, type Column, useToast, parsePageSize } from "../../components/ui";
 import { api, errorMessage, jsonBody } from "../../lib/api";
-import { parsePageSize } from "../../lib/pagination";
 import { operationLabel, resultStatusLabel, targetKindLabel } from "../../lib/status-labels";
 interface JobView extends Record<string, unknown> {
   id: string;

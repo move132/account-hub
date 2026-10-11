@@ -1,7 +1,7 @@
 import type { ToastTone } from "../../components/ui/toast"
 import { ApiError, errorMessage } from "../../lib/api"
 
-export type ClaimStatus = "claimed" | "already_claimed" | "rejected" | "unconfirmed"
+type ClaimStatus = "claimed" | "already_claimed" | "rejected" | "unconfirmed"
 
 export interface ClaimOperation {
   status: ClaimStatus
@@ -12,7 +12,7 @@ export interface ClaimOperation {
   warning?: { stage?: string; code?: string; message: string }
 }
 
-export interface ClaimFeedback {
+interface ClaimFeedback {
   status: ClaimStatus
   title: string
   description?: string

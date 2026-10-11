@@ -36,6 +36,6 @@ export interface Attempt extends Record<string, unknown> {
 
 export function formatTime(value?: number | string) {
   if (!value) return "—"
-  const date = typeof value === "number" ? new Date(value) : new Date(value)
+  const date = new Date(value)
   return Number.isNaN(date.getTime()) ? String(value) : new Intl.DateTimeFormat("zh-CN", { dateStyle: "short", timeStyle: "medium", timeZone: "Asia/Shanghai" }).format(date)
 }

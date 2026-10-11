@@ -53,7 +53,7 @@ const previewColumns: Array<Column<PreviewRow & { id: string }>> = [
   },
 ];
 
-export function isSupportedTokenImportFilename(filename: string) {
+function isSupportedTokenImportFilename(filename: string) {
   return /\.(txt|csv)$/i.test(filename);
 }
 

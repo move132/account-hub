@@ -162,7 +162,7 @@ func TestBrowserClientRetriesAndHonorsCancellation(t *testing.T) {
 	client := testClient(t, time.Second, 1)
 	client.browser = true
 	defer client.CloseIdleConnections()
-	response, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
+	response, err := client.Do(context.Background(), func() (*http.Request, error) {
 		return http.NewRequest(http.MethodGet, server.URL, nil)
 	})
 	if err != nil {
@@ -175,7 +175,7 @@ func TestBrowserClientRetriesAndHonorsCancellation(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	response, err = client.Do(ctx, func(_ *http.Client) (*http.Request, error) {
+	response, err = client.Do(ctx, func() (*http.Request, error) {
 		return http.NewRequest(http.MethodGet, server.URL+"/slow", nil)
 	})
 	if err != nil {
@@ -240,7 +240,7 @@ func TestBrowserClientProxySettings(t *testing.T) {
 		proxyURL := strings.Replace(proxy.URL, "http://", "http://proxy-user:proxy-password@", 1)
 		client.proxy.(*testProxySettings).value.Enabled = enabled
 		client.proxy.(*testProxySettings).value.URL = proxyURL
-		response, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
+		response, err := client.Do(context.Background(), func() (*http.Request, error) {
 			return http.NewRequest(http.MethodGet, origin.URL, nil)
 		})
 		if err != nil {
@@ -265,7 +265,7 @@ func TestBrowserClientTimesOut(t *testing.T) {
 	client := testClient(t, 50*time.Millisecond, 2)
 	client.browser = true
 	defer client.CloseIdleConnections()
-	_, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
+	_, err := client.Do(context.Background(), func() (*http.Request, error) {
 		return http.NewRequest(http.MethodGet, server.URL, nil)
 	})
 	if Code(err) != Timeout {

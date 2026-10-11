@@ -12,8 +12,7 @@ import (
 )
 
 type Profile struct {
-	Email  string
-	UserID string
+	Email string
 }
 
 type RefreshResult struct {
@@ -42,7 +41,7 @@ func NewClientWithBases(client *upstream.Client, chatGPTBase, soraBase string) *
 }
 
 func (c *Client) Check(ctx context.Context, accessToken string) (Profile, error) {
-	response, err := c.http.Do(ctx, func(_ *http.Client) (*http.Request, error) {
+	response, err := c.http.Do(ctx, func() (*http.Request, error) {
 		request, err := http.NewRequest(http.MethodGet, c.chatGPTBase+"/backend-api/me", nil)
 		if err == nil {
 			request.Header.Set("Authorization", bearer(accessToken))
@@ -61,11 +60,11 @@ func (c *Client) Check(ctx context.Context, accessToken string) (Profile, error)
 	if err := json.NewDecoder(response.Body).Decode(&payload); err != nil || payload.ID == "" {
 		return Profile{}, &upstream.Error{Code: upstream.InvalidResponse, Message: "上游账户响应格式错误", Cause: err}
 	}
-	return Profile{Email: payload.Email, UserID: payload.ID}, nil
+	return Profile{Email: payload.Email}, nil
 }
 
 func (c *Client) Refresh(ctx context.Context, sessionToken string) (RefreshResult, error) {
-	response, err := c.http.Do(ctx, func(_ *http.Client) (*http.Request, error) {
+	response, err := c.http.Do(ctx, func() (*http.Request, error) {
 		request, err := http.NewRequest(http.MethodGet, c.soraBase+"/api/auth/session", nil)
 		if err == nil {
 			request.Header.Set("Cookie", "__Secure-next-auth.session-token="+sessionToken)

@@ -16,8 +16,8 @@ import (
 // The SQLite runner has one owner per database. Multi-process workers are not
 // supported: startup recovery requires that the previous process has stopped.
 type Execution struct {
-	JobID, ItemID string
-	Attempt       int
+	ItemID  string
+	Attempt int
 }
 type executionContextKey struct{}
 
@@ -165,7 +165,7 @@ func (m *Manager) processOne(ctx context.Context, lane string) (bool, error) {
 	registered, found := m.executor(kind, action)
 	started := time.Now()
 	m.logger.Info("job item started", "job_id", item.JobID, "item_id", item.ID, "target_kind", kind, "action", action, "attempt", item.Attempts)
-	executionCtx := context.WithValue(ctx, executionContextKey{}, Execution{JobID: item.JobID, ItemID: item.ID, Attempt: item.Attempts})
+	executionCtx := context.WithValue(ctx, executionContextKey{}, Execution{ItemID: item.ID, Attempt: item.Attempts})
 	var executeErr error
 	if !found {
 		executeErr = errors.New("job executor unavailable")

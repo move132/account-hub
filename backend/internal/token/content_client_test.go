@@ -42,7 +42,7 @@ func contentClientFixture(t *testing.T, handler http.HandlerFunc) (*Client, *Con
 	if err != nil {
 		t.Fatal(err)
 	}
-	return client, NewContentHandler(repository, client, nil), record
+	return client, NewContentHandlerWithService(NewContentService(repository, client), nil), record
 }
 
 func TestContentClientStorageListsAndCredentials(t *testing.T) {

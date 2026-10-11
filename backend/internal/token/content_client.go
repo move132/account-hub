@@ -39,7 +39,7 @@ func (c *Client) contentRequest(ctx context.Context, accessToken, method, path s
 }
 
 func (c *Client) contentRequestURL(ctx context.Context, accessToken, method, target, referer string) (*http.Response, error) {
-	factory := func(_ *http.Client) (*http.Request, error) {
+	factory := func() (*http.Request, error) {
 		request, err := http.NewRequest(method, target, nil)
 		if err != nil {
 			return nil, err

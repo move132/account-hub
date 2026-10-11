@@ -30,7 +30,7 @@ func TestServiceCreateCheckAndRefresh(t *testing.T) {
 		t.Fatal(err)
 	}
 	repository := NewRepository(db)
-	client := fakeClient{profile: Profile{Email: "verified@example.com", UserID: "user_1"}, refresh: RefreshResult{AccessToken: "access-new", SessionToken: "session-new", Expires: "2030-01-01T00:00:00Z"}}
+	client := fakeClient{profile: Profile{Email: "verified@example.com"}, refresh: RefreshResult{AccessToken: "access-new", SessionToken: "session-new", Expires: "2030-01-01T00:00:00Z"}}
 	service := NewService(repository, client, settingRepository)
 	created, err := service.Create(ctx, CreateInput{Name: "Account", AccessToken: "access-old", SessionToken: "session-old"})
 	if err != nil {

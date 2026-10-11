@@ -42,7 +42,7 @@ export interface ConversationPage extends Record<string, unknown> {
   has_more: boolean;
 }
 
-export interface ConversationMessage {
+interface ConversationMessage {
   id: string;
   role: string;
   author: string;

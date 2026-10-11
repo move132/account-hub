@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"account-hub/internal/platform/apperror"
+	"account-hub/internal/platform/refreshpolicy"
 	"account-hub/internal/platform/security"
 	"account-hub/internal/platform/upstream"
 	"account-hub/internal/settings"
@@ -120,6 +121,11 @@ func (s *Service) Get(ctx context.Context, id string) (View, error) {
 func (s *Service) GetForEdit(ctx context.Context, id string) (EditView, error) {
 	record, err := s.repository.Get(ctx, id)
 	return ToEditView(record), err
+}
+
+// TargetLabels reads only non-secret display fields in bounded batches.
+func (s *Service) TargetLabels(ctx context.Context, ids []string) (map[string]string, error) {
+	return s.repository.TargetLabels(ctx, ids)
 }
 
 func (s *Service) List(ctx context.Context, filter ListFilter) ([]View, int, error) {
@@ -264,7 +270,7 @@ func (s *Service) Refresh(ctx context.Context, id string) (View, error) {
 	s.finishAttempt(&attempt, operationErr)
 	writeCtx, cancel := completionContext(ctx)
 	defer cancel()
-	next := refreshDeadline(ctx, record, s.now().UTC(), s.refreshInterval(writeCtx), operationErr)
+	next := refreshpolicy.NextDeadline(ctx, record.NextRefreshAt, record.RefreshFailures, s.now().UTC(), s.refreshInterval(writeCtx), operationErr)
 	updated, err := s.repository.CompleteRefresh(writeCtx, record, result, profile, next, attempt)
 	if err != nil {
 		s.logger.Error("token refresh outcome could not be committed", "token_id", id, "error", err, "upstream_succeeded", operationErr == nil)
@@ -282,7 +288,7 @@ func (s *Service) newAttempt(ctx context.Context, record Record, operation strin
 	if err != nil {
 		return Attempt{}, err
 	}
-	return Attempt{ID: id, OperationKey: operationKey(ctx), TokenID: record.ID, TargetLabel: label(record), Operation: operation, StartedAt: s.now().UTC().UnixMilli()}, nil
+	return Attempt{ID: id, OperationKey: operationKey(ctx), TargetLabel: label(record), Operation: operation, StartedAt: s.now().UTC().UnixMilli()}, nil
 }
 
 func (s *Service) finishAttempt(attempt *Attempt, operationErr error) {

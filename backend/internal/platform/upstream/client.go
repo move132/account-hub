@@ -83,7 +83,7 @@ func (c *Client) WithLogger(logger *slog.Logger) *Client {
 	return c
 }
 
-type RequestFactory func(client *http.Client) (*http.Request, error)
+type RequestFactory func() (*http.Request, error)
 
 func (c *Client) Do(ctx context.Context, factory RequestFactory) (*http.Response, error) {
 	return c.do(ctx, factory, c.retries, true)
@@ -115,7 +115,7 @@ func (c *Client) do(ctx context.Context, factory RequestFactory, retries int, fo
 	}
 	var last error
 	for attempt := 0; attempt <= retries; attempt++ {
-		request, err := factory(httpClient)
+		request, err := factory()
 		if err != nil {
 			cancel()
 			c.logger.Warn("build upstream request failed", "attempt", attempt+1, "max_attempts", retries+1, "error", err)

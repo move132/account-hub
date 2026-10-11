@@ -31,36 +31,56 @@ func testStore(t *testing.T) (*Store, *sql.DB) {
 }
 func TestLocalCommandAndReplayCommitTogether(t *testing.T) {
 	store, db := testStore(t)
+	ctx := context.Background()
 	request := Request{ActorID: "admin", Route: "create", Key: "one", Hash: "hash"}
-	failed := errors.New("injected failure after local mutation")
-	if _, _, err := store.InTransaction(context.Background(), request, func(ctx context.Context, tx *sql.Tx) (Result, error) {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO test_commands(id) VALUES('one')`); err != nil {
-			return Result{}, err
+	reservation, created, err := store.Reserve(ctx, request)
+	if err != nil || !created {
+		t.Fatalf("reserve created=%v err=%v", created, err)
+	}
+	writeCtx := WithRecord(ctx, reservation)
+	expected := Result{Status: 201, Body: `{"id":"one"}`, ResourceType: "test", ResourceID: "one"}
+	// Use the same entry point as account creation: both the domain write and
+	// replay are staged in the caller's transaction before commit or rollback.
+	write := func(tx *sql.Tx) {
+		t.Helper()
+		if _, err := tx.ExecContext(writeCtx, `INSERT INTO test_commands(id) VALUES('one')`); err != nil {
+			t.Fatal(err)
 		}
-		return Result{}, failed
-	}); !errors.Is(err, failed) {
-		t.Fatalf("expected rollback failure, got %v", err)
+		if err := CompleteResultTx(writeCtx, tx, expected); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tx, err := db.BeginTx(writeCtx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	write(tx)
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
 	}
 	var count int
 	if err := db.QueryRow(`SELECT COUNT(*) FROM test_commands`).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("partial mutation count=%d err=%v", count, err)
 	}
-	if _, found, err := store.Lookup(context.Background(), request); err != nil || found {
-		t.Fatalf("partial replay found=%v err=%v", found, err)
+	if record, found, err := store.Lookup(ctx, request); err != nil || !found || record.State != "processing" || record.Body != "" {
+		t.Fatalf("rolled-back result became replayable: record=%+v found=%v err=%v", record, found, err)
 	}
-	calls := 0
-	apply := func(ctx context.Context, tx *sql.Tx) (Result, error) {
-		calls++
-		_, err := tx.ExecContext(ctx, `INSERT INTO test_commands(id) VALUES('one')`)
-		return Result{Status: 201, Body: `{"id":"one"}`, ResourceType: "test", ResourceID: "one"}, err
+	tx, err = db.BeginTx(writeCtx, nil)
+	if err != nil {
+		t.Fatal(err)
 	}
-	first, replay, err := store.InTransaction(context.Background(), request, apply)
-	if err != nil || replay {
-		t.Fatalf("create replay=%v err=%v", replay, err)
+	defer tx.Rollback()
+	write(tx)
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
 	}
-	second, replay, err := store.InTransaction(context.Background(), request, apply)
-	if err != nil || !replay || calls != 1 || first.Body != second.Body {
-		t.Fatalf("replay=%v calls=%d result=%+v err=%v", replay, calls, second, err)
+	replay, created, err := store.Reserve(ctx, request)
+	if err != nil || created || replay.State != "completed" || replay.Body != expected.Body || replay.ResourceID != expected.ResourceID {
+		t.Fatalf("committed replay created=%v record=%+v err=%v", created, replay, err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM test_commands`).Scan(&count); err != nil || count != 1 {
+		t.Fatalf("mutation count=%d err=%v", count, err)
 	}
 }
 func TestUnknownReservationNeverGrantsAnotherExecution(t *testing.T) {

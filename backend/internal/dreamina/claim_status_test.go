@@ -93,9 +93,6 @@ func TestClaimDecisionBusinessCodesAndRejections(t *testing.T) {
 			if got != want {
 				t.Fatalf("got=%+v want=%+v", got, want)
 			}
-			if status := normalizeClaimStatus(test.raw); status != got.Status {
-				t.Fatalf("compatibility helper=%s decision=%s", status, got.Status)
-			}
 		})
 	}
 	for name, value := range map[string]any{"absent": nil, "false": false, "zero": 0, "string false": "false", "empty string": "", "object": map[string]any{}, "array": []any{}} {

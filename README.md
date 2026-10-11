@@ -1,6 +1,6 @@
 # Account Hub
 
-全新的 Go + React 账号凭据管理后台。项目与仓库中的旧 Python/Vue 系统完全独立，不读取或修改旧代码和旧数据库。
+Go + React 账号凭据管理后台。
 
 ## 功能
 
@@ -18,7 +18,7 @@ ChatGPT/Sora 的 Token 检查和刷新使用 `tls-client v1.16.0`，固定 Chrom
 
 依赖 Go 1.26、Node.js 24 和 pnpm。
 
-从 `account-manage/` 一键启动 Go API 和 Vite 开发服务器：
+在项目根目录一键启动 Go API 和 Vite 开发服务器：
 
 ```sh
 sh ./run.sh
@@ -28,21 +28,21 @@ sh ./run.sh
 
 脚本先下载 Go 依赖并编译后端，等待 <http://127.0.0.1:8500/health/ready> 就绪后，再在 <http://localhost:8501> 启动开发页面，将 `/api` 与 `/health` 代理到 `127.0.0.1:8500`。按 `Ctrl+C` 会同时停止前后端。
 
-未自定义 `GOPROXY` 时，脚本会将 Go 的默认下载源改为本次启动使用的 `https://goproxy.cn|https://proxy.golang.org|direct`，支持连接超时后切换下载源。可在 `account-manage/.env` 中设置 `GOPROXY='你的下载源'`；环境变量和已有的自定义 Go 配置优先。依赖下载或编译失败时，脚本会直接退出并显示原因。
+未自定义 `GOPROXY` 时，脚本会将 Go 的默认下载源改为本次启动使用的 `https://goproxy.cn|https://proxy.golang.org|direct`，支持连接超时后切换下载源。可在项目根目录的 `.env` 中设置 `GOPROXY='你的下载源'`；环境变量和已有的自定义 Go 配置优先。依赖下载或编译失败时，脚本会直接退出并显示原因。
 
-手动运行时，先启动后端：
+手动运行时，在项目根目录启动后端：
 
 ```powershell
-cd account-manage\backend
+cd backend
 $env:GOPROXY = 'https://goproxy.cn|https://proxy.golang.org|direct'
 go mod download
 go run ./cmd/account-hub
 ```
 
-再在另一个终端启动前端：
+再在另一个终端，从项目根目录启动前端：
 
 ```powershell
-cd account-manage\frontend
+cd frontend
 pnpm install --ignore-scripts
 pnpm dev
 ```
@@ -52,7 +52,7 @@ pnpm dev
 ## 检查与构建
 
 ```powershell
-cd account-manage\backend
+cd backend
 go test ./...
 cd ..\frontend
 pnpm test
@@ -75,7 +75,7 @@ docker compose pull
 docker compose up -d
 ```
 
-`compose.yaml` 使用 GHCR 预构建镜像，`compose-local.yaml` 用于本地构建；两个配置都只属于本项目，不会调用或修改仓库根目录的旧 Compose 配置。
+`compose.yaml` 使用 GHCR 预构建镜像，`compose-local.yaml` 用于本地构建。
 
 ## 导入与导出
 
@@ -115,13 +115,11 @@ user@example.com,password-value,session-value,,enabled,
 
 ## API Key
 
-在“系统设置 → API Key 管理”中点击“新增 Key”，输入名称（最多 15 个字符）并保存。列表显示脱敏值，点击 Key 旁的“复制”即可复制完整 Key，刷新页面或重启服务后仍可复制。删除后，该 Key 的后续请求立即失效。Key 持续有效到被删除，数据库保存鉴权哈希、展示用的部分字符和加密后的完整值。
+在“系统设置 → API Key 管理”中点击“新增 Key”，输入名称（最多 15 个字符）并保存。完整 Key 仅在创建成功的弹窗中显示和复制，请立即保存；关闭弹窗、刷新页面或重启后无法再次查看。列表只显示脱敏值。Key 持续有效到被删除，删除后该 Key 的后续请求立即失效。
 
-列表点击复制会直接请求后端，不根据列表元数据提前拦截。复制接口没有可读取的完整值时返回不可用，原有接口调用能力不受影响。
+数据库只保存鉴权哈希和展示用的部分字符，不保存完整 Key。
 
-本地开发时，前端热更新不会重启 Go 后端。更新涉及 Key 存储的后端代码后，应重新运行 `sh ./run.sh` 再创建 Key；在旧后端进程中生成的 Key 不会因之后重启而自动补回完整值。
-
-列表的“最近使用时间”记录 Key 最近一次成功通过接口鉴权的时间，按北京时间显示，尚未使用时显示“未使用”。业务操作失败但鉴权成功的请求也计入使用；查看设置、复制 Key 或使用 Cookie 调用不会更新此时间。
+列表的“最近使用时间”记录 Key 最近一次成功通过接口鉴权的时间，按北京时间显示，尚未使用时显示“未使用”。业务操作失败但鉴权成功的请求也计入使用；查看设置或使用 Cookie 调用不会更新此时间。
 
 API Key 直接用于现有 Token 接口，通过请求头 `Authorization: Bearer <API Key>` 鉴权：
 
@@ -216,7 +214,7 @@ Key 管理复用 `GET/PATCH /api/v1/settings`，由管理员 Cookie 与 CSRF 保
 {"api_key_action":{"action":"create","name":"自动化脚本"}}
 ```
 
-创建返回 `201`，`data.api_key` 为脱敏元数据，`data.secret` 为完整 Key。完整 Key 仅在创建成功时显示并可复制，请立即保存；关闭弹窗、刷新页面或重启后无法再次查看。列表只展示脱敏 Key，管理操作仅支持新增和删除。
+创建返回 `201`，`data.api_key` 为脱敏元数据，`data.secret` 为仅返回一次的完整 Key。管理操作仅支持新增和删除。
 
 完整 Key 不进入数据库、列表、日志或持久化响应缓存。删除提交：
 
@@ -237,7 +235,3 @@ Key 使用 32 字节安全随机数生成，接口鉴权通过 SHA-256 哈希匹
 - 上游超时：30 秒
 - 临时错误重试：2 次；积分领取不自动重试
 - Job 扫描：5 秒
-
-## 后端架构
-
-后端模块职责、任务恢复与幂等语义、数据库迁移和验证方式见 [后端架构与运行契约](backend/ARCHITECTURE.md)。

@@ -54,7 +54,14 @@ export function PageHeader({ title, description, actions }: {
       {actions}</div>
   </div>;
 }
-const pageSizeOptions = [10, 20, 50, 100, 200, 500].map((value) => ({ value: String(value), label: `${value} / 页` }));
+const pageSizes = [10, 20, 50, 100, 200, 500];
+const allowedPageSizes = new Set(pageSizes);
+const pageSizeOptions = pageSizes.map((value) => ({ value: String(value), label: `${value} / 页` }));
+
+export function parsePageSize(value: string | number | null | undefined) {
+  const size = Number(value || 20);
+  return allowedPageSizes.has(size) ? size : 20;
+}
 
 export function Pagination({ page, totalPages, onPageChange, pageSize, onPageSizeChange }: {
   page: number;
@@ -117,17 +124,4 @@ export function DataTable<T extends {
         })}</tbody>
     </table>
     {rows.length === 0 && <EmptyState title={emptyText} />}</div>;
-}
-export function StatCard({ label, value, hint }: {
-  label: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return <Card className="p-4">
-    <p className="text-xs text-app-subtle">
-      {label}</p>
-    <p className="mt-1.5 text-xl font-medium tracking-tight">
-      {value}</p>
-    {hint && <p className="mt-1 text-xs text-app-subtle">
-      {hint}</p>}</Card>;
 }

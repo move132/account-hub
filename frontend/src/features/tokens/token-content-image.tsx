@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import ImageIcon from "lucide-react/dist/esm/icons/image.mjs";
-import { Button, ImagePreview, Spinner, type ImagePreviewItem } from "../../components/ui";
+import { Button, ImagePreview, Spinner } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { contentPath } from "./content-types";
 
-export async function fetchTokenImage(tokenId: string, fileId: string, signal?: AbortSignal): Promise<string> {
+async function fetchTokenImage(tokenId: string, fileId: string, signal?: AbortSignal): Promise<string> {
   const data = await api<{ image: { data_url: string } }>(`${contentPath(tokenId)}/files/${encodeURIComponent(fileId)}/image`, { signal });
   if (!/^data:image\/(png|jpeg|webp|gif|avif);base64,/.test(data.image.data_url)) throw new Error("图片格式不支持预览");
   return data.image.data_url;
@@ -14,7 +14,7 @@ export function TokenContentImage({ tokenId, fileId, label = "聊天图片", onP
   tokenId: string;
   fileId: string;
   label?: string;
-  onPreview: (image: { url: string; label: string }) => void;
+  onPreview: () => void;
 }) {
   const container = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
@@ -49,7 +49,7 @@ export function TokenContentImage({ tokenId, fileId, label = "聊天图片", onP
     return () => controller.abort();
   }, [tokenId, fileId, visible, retry]);
   return <div ref={container} className="grid size-40 shrink-0 place-items-center overflow-hidden rounded-lg border border-app-border bg-app-muted">
-    {url ? <Button variant="ghost" className="!h-full w-full !p-0" aria-label={`放大${label}`} onClick={() => onPreview({ url, label })}>
+    {url ? <Button variant="ghost" className="!h-full w-full !p-0" aria-label={`放大${label}`} onClick={onPreview}>
       <img src={url} alt={label} width={160} height={160} loading="lazy" className="size-full object-cover" onError={() => { setURL(""); setError("图片无法显示，请重试"); }} />
     </Button> : error ? <div className="grid gap-2 p-3 text-center">
       <ImageIcon aria-hidden="true" className="mx-auto size-5 text-app-subtle" />
@@ -57,17 +57,6 @@ export function TokenContentImage({ tokenId, fileId, label = "聊天图片", onP
       <Button size="sm" onClick={() => setRetry((value) => value + 1)}>重试图片</Button>
     </div> : <Spinner label="加载图片" />}
   </div>;
-}
-
-export function TokenImagePreview({ image, onClose, index = 0, total = 1, onPrevious, onNext }: {
-  image: ImagePreviewItem | null;
-  onClose: () => void;
-  index?: number;
-  total?: number;
-  onPrevious?: () => void;
-  onNext?: () => void;
-}) {
-  return <ImagePreview image={image} index={index} total={total} onPrevious={onPrevious} onNext={onNext} onClose={onClose} />;
 }
 
 export function TokenContentImagePreview({ tokenId, fileId, label, index = 0, total = 1, onPrevious, onNext, onClose }: {

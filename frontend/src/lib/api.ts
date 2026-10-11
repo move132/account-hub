@@ -1,4 +1,4 @@
-export interface Envelope<T extends Record<string, unknown> = Record<string, unknown>> {
+interface Envelope<T extends Record<string, unknown> = Record<string, unknown>> {
   code: number
   success: boolean
   data: T
@@ -7,14 +7,12 @@ export interface Envelope<T extends Record<string, unknown> = Record<string, unk
 }
 
 export class ApiError extends Error {
-  code: number
   errorCode?: string
   requestId?: string
   details?: unknown
 
   constructor(response: Envelope) {
     super(response.msg)
-    this.code = response.code
     this.errorCode = typeof response.data.error_code === "string" ? response.data.error_code : undefined
     this.requestId = typeof response.data.request_id === "string" ? response.data.request_id : undefined
     this.details = response.data.details
@@ -55,7 +53,7 @@ export function createRequestId() {
   return formatUuid(bytes)
 }
 
-export async function api<T extends Record<string, unknown>>(path: string, init: RequestInit = {}): Promise<T> {
+function request(path: string, init: RequestInit): Promise<Response> {
   const headers = new Headers(init.headers)
   const method = (init.method ?? "GET").toUpperCase()
   if (!(init.body instanceof FormData) && init.body && !headers.has("Content-Type")) {
@@ -64,22 +62,29 @@ export async function api<T extends Record<string, unknown>>(path: string, init:
   if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
     headers.set("X-CSRF-Token", csrfToken())
   }
-  const response = await fetch(path, { ...init, headers, credentials: "include" })
+  return fetch(path, { ...init, headers, credentials: "include" })
+}
+
+export async function api<T extends Record<string, unknown>>(path: string, init: RequestInit = {}): Promise<T> {
+  const response = await request(path, init)
   const envelope = (await response.json()) as Envelope<T>
   if (!response.ok || !envelope.success) throw new ApiError(envelope)
   return envelope.data
 }
 
+export function saveBlob(filename: string, blob: Blob) {
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement("a")
+  anchor.href = url
+  anchor.download = filename
+  document.body.appendChild(anchor)
+  anchor.click()
+  anchor.remove()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 export async function downloadApiFile(path: string, init: RequestInit = {}, fallbackFilename = "download.bin") {
-  const headers = new Headers(init.headers)
-  const method = (init.method ?? "GET").toUpperCase()
-  if (!(init.body instanceof FormData) && init.body && !headers.has("Content-Type")) {
-    headers.set("Content-Type", "application/json")
-  }
-  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
-    headers.set("X-CSRF-Token", csrfToken())
-  }
-  const response = await fetch(path, { ...init, headers, credentials: "include" })
+  const response = await request(path, init)
   if (!response.ok) {
     try {
       const envelope = (await response.json()) as Envelope

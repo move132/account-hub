@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
-import ExternalLink from "lucide-react/dist/esm/icons/external-link.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
 import List from "lucide-react/dist/esm/icons/list.mjs";
 import ZoomIn from "lucide-react/dist/esm/icons/zoom-in.mjs";
@@ -209,11 +208,11 @@ function HistoryDetailGrid({ items, onPreview, onCopyPrompt }: {
 }) {
   return <div className="grid items-start gap-3 lg:grid-cols-2">
     {items.map((item) => <article key={`${item.type}-${item.id}`} className="grid gap-3 rounded-lg border border-app-border bg-app-muted p-3">
-      {(item.modelName || item.resources.length > 0) && <div className="flex flex-wrap gap-1">
+      {(item.modelName || item.resourceCount > 0) && <div className="flex flex-wrap gap-1">
         {item.modelName && <Badge>
           {item.modelName}</Badge>}
-        {item.resources.length > 0 && <Badge tone="success">
-          上传 {item.resources.length} 张图片</Badge>}
+        {item.resourceCount > 0 && <Badge tone="success">
+          上传 {item.resourceCount} 张图片</Badge>}
       </div>}
       <div className="flex items-start gap-2">
         <p title={item.prompt || undefined} className={`line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5 ${item.prompt ? "" : "text-app-subtle"}`}>

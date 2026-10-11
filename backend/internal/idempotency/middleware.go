@@ -16,7 +16,7 @@ import (
 )
 
 // Middleware adapts HTTP to Store. Application commands that own local writes
-// should use InTransaction or AttachResourceTx so replay is committed atomically.
+// should use CompleteResultTx or AttachResourceTx so replay is committed atomically.
 type Middleware struct{ store *Store }
 
 func New(db *sql.DB) *Middleware { return &Middleware{store: NewStore(db)} }

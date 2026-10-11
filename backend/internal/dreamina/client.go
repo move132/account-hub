@@ -53,7 +53,7 @@ func (c *Client) Login(ctx context.Context, email, password string) (LoginResult
 	form.Set("email", encodeValue(email))
 	form.Set("password", encodeValue(password))
 	body := form.Encode()
-	response, err := c.http.Do(ctx, func(_ *http.Client) (*http.Request, error) {
+	response, err := c.http.Do(ctx, func() (*http.Request, error) {
 		request, err := http.NewRequest(http.MethodPost, c.loginBase+"/passport/web/email/login/?aid=513641", strings.NewReader(body))
 		if err == nil {
 			applyHeaders(request, "application/x-www-form-urlencoded")
@@ -125,7 +125,7 @@ func (c *Client) Assets(ctx context.Context, sessionID string, offset, count int
 		payload["offset"] = offset
 	}
 	body, _ := json.Marshal(payload)
-	response, err := c.http.Do(ctx, func(_ *http.Client) (*http.Request, error) {
+	response, err := c.http.Do(ctx, func() (*http.Request, error) {
 		request, err := http.NewRequest(http.MethodPost, c.assetsBase+"/mweb/v1/get_asset_list", bytes.NewReader(body))
 		if err == nil {
 			applyHeaders(request, "application/json")
@@ -158,7 +158,7 @@ func (c *Client) Assets(ctx context.Context, sessionID string, offset, count int
 
 func (c *Client) commerce(ctx context.Context, path, sessionID string, payload any, noRetry, requireSuccess bool) (map[string]any, error) {
 	body, _ := json.Marshal(payload)
-	factory := func(_ *http.Client) (*http.Request, error) {
+	factory := func() (*http.Request, error) {
 		request, err := http.NewRequest(http.MethodPost, c.commerceBase+path, bytes.NewReader(body))
 		if err == nil {
 			applyHeaders(request, "application/json")

@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Card, DataTable, PageHeader, Pagination, Spinner, type Column, useToast } from "../../components/ui";
+import { Badge, Card, DataTable, PageHeader, Pagination, Spinner, type Column, useToast, parsePageSize } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
-import { parsePageSize } from "../../lib/pagination";
 import { auditActionLabel, targetKindLabel } from "../../lib/status-labels";
 interface AuditEntry extends Record<string, unknown> {
   id: string;

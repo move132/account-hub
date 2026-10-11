@@ -18,12 +18,6 @@ type ContentHandler struct {
 	audit   *audit.Repository
 }
 
-// NewContentHandler is retained for existing callers; composition roots can
-// explicitly assemble the application service with NewContentHandlerWithService.
-func NewContentHandler(repository *Repository, client *Client, auditRepository *audit.Repository) *ContentHandler {
-	return NewContentHandlerWithService(NewContentService(repository, client), auditRepository)
-}
-
 func NewContentHandlerWithService(service *ContentService, auditRepository *audit.Repository) *ContentHandler {
 	return &ContentHandler{service: service, audit: auditRepository}
 }

@@ -16,7 +16,6 @@ import (
 
 var (
 	ErrConflict   = errors.New("idempotency key reused with different request")
-	ErrInProgress = errors.New("idempotent request is in progress")
 	ErrUncertain  = errors.New("previous operation outcome requires reconciliation")
 	ErrInvalidKey = errors.New("idempotency key exceeds 200 characters")
 )
@@ -170,57 +169,11 @@ func complete(ctx context.Context, db platformsqlite.DBTX, record Record, result
 func (s *Store) Complete(ctx context.Context, record Record, result Result) error {
 	return complete(ctx, s.db, record, result)
 }
-func (s *Store) CompleteTx(ctx context.Context, tx *sql.Tx, record Record, result Result) error {
-	return complete(ctx, tx, record, result)
-}
 func (s *Store) MarkUncertain(ctx context.Context, record Record) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE idempotency_keys SET state='uncertain',lease_expires_at=0
         WHERE actor_id=? AND route=? AND key=? AND owner_token=? AND state='processing'`,
 		record.ActorID, record.Route, record.Key, record.OwnerToken)
 	return err
-}
-
-// InTransaction is the local-command boundary: mutation and replay result either
-// commit together or are both rolled back. Remote calls must not run inside it.
-func (s *Store) InTransaction(ctx context.Context, request Request, apply func(context.Context, *sql.Tx) (Result, error)) (Result, bool, error) {
-	key, err := NormalizeKey(request.Key)
-	if err != nil {
-		return Result{}, false, err
-	}
-	request.Key = key
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Result{}, false, err
-	}
-	defer tx.Rollback()
-	if request.Key != "" {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM idempotency_keys WHERE actor_id=? AND route=? AND key=? AND expires_at<=?`, request.ActorID, request.Route, request.Key, time.Now().UnixMilli()); err != nil {
-			return Result{}, false, err
-		}
-		existing, found, err := lookup(ctx, tx, request)
-		if err != nil {
-			return Result{}, false, err
-		}
-		if found {
-			if existing.State != "completed" {
-				return Result{}, false, ErrUncertain
-			}
-			return Result{Status: existing.Status, Body: existing.Body, Headers: existing.Headers, ResourceType: existing.ResourceType, ResourceID: existing.ResourceID}, true, nil
-		}
-	}
-	result, err := apply(ctx, tx)
-	if err != nil {
-		return Result{}, false, err
-	}
-	if request.Key != "" {
-		if err := s.PutTx(ctx, tx, request, result); err != nil {
-			return Result{}, false, err
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return Result{}, false, err
-	}
-	return result, false, nil
 }
 
 type recordContextKey struct{}

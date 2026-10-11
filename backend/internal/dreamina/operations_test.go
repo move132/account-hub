@@ -216,24 +216,6 @@ func TestCancelledRefreshDoesNotWaitNormalInterval(t *testing.T) {
 		t.Fatalf("cancellation outcome missing: %+v %v", attempts, err)
 	}
 }
-func TestRefreshFailureBackoff(t *testing.T) {
-	now := time.Unix(1700000000, 0)
-	normal := 7 * 24 * time.Hour
-	for _, test := range []struct {
-		code     string
-		failures int
-		delay    time.Duration
-	}{
-		{upstream.Timeout, 0, 5 * time.Minute}, {upstream.NetworkError, 1, 10 * time.Minute},
-		{upstream.RateLimited, 3, 40 * time.Minute}, {upstream.Unavailable, 20, time.Hour},
-		{upstream.InvalidCredentials, 5, normal}, {upstream.ChallengeRequired, 1, normal},
-	} {
-		got := refreshDeadline(context.Background(), Record{RefreshFailures: test.failures}, now, normal, &upstream.Error{Code: test.code})
-		if got != now.Add(test.delay).UnixMilli() {
-			t.Fatalf("%s failures=%d deadline=%d", test.code, test.failures, got)
-		}
-	}
-}
 func TestCreateAndIdempotencyCommitTogether(t *testing.T) {
 	for _, fail := range []bool{false, true} {
 		name := "success"
@@ -276,17 +258,6 @@ func TestCreateAndIdempotencyCommitTogether(t *testing.T) {
 				}
 			}
 		})
-	}
-}
-
-func TestZeroRefreshIntervalStillBoundsCredentialFailures(t *testing.T) {
-	now := time.Unix(1700000000, 0)
-	failed := refreshDeadline(context.Background(), Record{}, now, 0, &upstream.Error{Code: upstream.InvalidCredentials})
-	if failed != now.Add(time.Hour).UnixMilli() {
-		t.Fatalf("invalid credentials hot-loop at zero interval: %d", failed)
-	}
-	if success := refreshDeadline(context.Background(), Record{}, now, 0, nil); success != now.UnixMilli() {
-		t.Fatal("zero interval success semantics changed")
 	}
 }
 

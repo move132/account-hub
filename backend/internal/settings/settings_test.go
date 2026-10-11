@@ -164,7 +164,7 @@ func TestUpdateRollsBackConfigurationAndEffects(t *testing.T) {
 	if err != nil || after != before {
 		t.Fatalf("failed update changed snapshot: %+v %v", after, err)
 	}
-	values, err := repository.Values(ctx)
+	values, err := readStoredValues(ctx, repository)
 	if err != nil || values["proxy_url"] != "" {
 		t.Fatalf("failed update changed database: %v %v", values, err)
 	}
@@ -215,7 +215,7 @@ func TestConcurrentUpdatesPreserveProxyInvariant(t *testing.T) {
 		if invalid != 1 {
 			t.Fatalf("wanted one rejected conflicting patch, got %d", invalid)
 		}
-		values, err := repository.Values(ctx)
+		values, err := readStoredValues(ctx, repository)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -267,7 +267,7 @@ func TestAuditFailureRollsBackSettings(t *testing.T) {
 	if _, err := service.Update(ctx, map[string]any{"token_refresh_interval_hours": 24}); err == nil {
 		t.Fatal("update succeeded without required audit record")
 	}
-	values, err := repository.Values(ctx)
+	values, err := readStoredValues(ctx, repository)
 	if err != nil || values["token_refresh_interval_hours"] != 168 {
 		t.Fatalf("settings changed without audit: %v %v", values, err)
 	}
@@ -309,4 +309,14 @@ func TestCleanupPreservesOperationMarkerUntilJobIsRemoved(t *testing.T) {
 	if err != nil || result.TokenAttempts != 1 || result.Jobs != 1 {
 		t.Fatalf("completed job and marker not removed: %+v %v", result, err)
 	}
+}
+
+// Read persisted rows rather than the runtime cache when asserting rollback and
+// cross-field configuration invariants.
+func readStoredValues(ctx context.Context, repository *Repository) (map[string]any, error) {
+	items, err := repository.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return itemValues(items), nil
 }

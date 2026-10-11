@@ -58,7 +58,15 @@ func TestSchedulerCreatesPersistentRefreshJob(t *testing.T) {
 	dreaminaService := dreamina.NewService(dreaminaRepository, dreaminaClient{}, settingRepository)
 	manager := job.NewManager(db, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	manager.Register("token", "refresh", func(context.Context, string, json.RawMessage) error { return nil }, nil)
-	scheduler := New(manager, settingRepository, tokenService, dreaminaService, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	scheduler := New(manager, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Schedule{TargetKind: "token", Source: tokenService, Policy: func(ctx context.Context) (bool, int, error) {
+			snapshot, err := settingRepository.Snapshot(ctx)
+			return snapshot.Token.Enabled, snapshot.Token.BatchSize, err
+		}},
+		Schedule{TargetKind: "dreamina", Source: dreaminaService, Policy: func(ctx context.Context) (bool, int, error) {
+			snapshot, err := settingRepository.Snapshot(ctx)
+			return snapshot.Dreamina.Enabled, snapshot.Dreamina.BatchSize, err
+		}})
 	go scheduler.Start(ctx, 10*time.Millisecond)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
@@ -87,11 +95,11 @@ func (s *recordingDueSource) DueIDs(_ context.Context, limit int) ([]string, err
 	s.limit = limit
 	return []string{"one", "two"}, nil
 }
-func TestTypedSchedulePolicyDoesNotReadLegacySettings(t *testing.T) {
+func TestSchedulePolicyControlsEnablementAndBatchSize(t *testing.T) {
 	submitter := &recordingSubmitter{}
 	source := &recordingDueSource{}
 	disabled := &recordingDueSource{}
-	scheduler := NewWithSchedules(submitter, nil, slog.New(slog.NewTextHandler(io.Discard, nil)),
+	scheduler := New(submitter, slog.New(slog.NewTextHandler(io.Discard, nil)),
 		Schedule{TargetKind: "token", Source: source, Policy: func(context.Context) (bool, int, error) { return true, 17, nil }},
 		Schedule{TargetKind: "dreamina", Source: disabled, Policy: func(context.Context) (bool, int, error) { return false, 5, nil }})
 	scheduler.scan(context.Background())

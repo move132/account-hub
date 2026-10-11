@@ -1,11 +1,11 @@
-import * as PopoverPrimitive from "@radix-ui/react-popover";
+import * as PopoverPrimitive from "radix-ui/popover";
 import { forwardRef, useLayoutEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import CalendarDays from "lucide-react/dist/esm/icons/calendar-days.mjs";
 import ChevronLeft from "lucide-react/dist/esm/icons/chevron-left.mjs";
 import ChevronRight from "lucide-react/dist/esm/icons/chevron-right.mjs";
 import Clock3 from "lucide-react/dist/esm/icons/clock-3.mjs";
 import X from "lucide-react/dist/esm/icons/x.mjs";
-import { Button, cn, Select } from "./primitives";
+import { Button, cn } from "./primitives";
 
 const weekdays = ["一", "二", "三", "四", "五", "六", "日"];
 const twoDigitValues = Array.from({ length: 60 }, (_, value) => String(value).padStart(2, "0"));
@@ -335,73 +335,3 @@ export const TimePicker = forwardRef<HTMLButtonElement, Omit<DateControlProps, "
 });
 
 TimePicker.displayName = "TimePicker";
-
-function parseDateTime(value: string) {
-  const match = /^(\d{4}-\d{2}-\d{2}) (\d{2}):(\d{2}):(\d{2})$/.exec(value);
-  if (!match || !parseDate(match[1])) return null;
-  const hour = Number(match[2]);
-  const minute = Number(match[3]);
-  const second = Number(match[4]);
-  if (hour > 23 || minute > 59 || second > 59) return null;
-  return { date: match[1], hour: match[2], minute: match[3], second: match[4] };
-}
-
-function DateTimePanel({ value, min, max, required, onCommit, onClear }: { value: string; min?: string; max?: string; required?: boolean; onCommit: (value: string) => void; onClear: () => void }) {
-  const parsed = parseDateTime(value);
-  const now = new Date();
-  const [date, setDate] = useState(parsed?.date || (dateInRange(formatDate(now), min, max) ? formatDate(now) : min || max || formatDate(now)));
-  const [hour, setHour] = useState(parsed?.hour || String(now.getHours()).padStart(2, "0"));
-  const [minute, setMinute] = useState(parsed?.minute || String(now.getMinutes()).padStart(2, "0"));
-  const [second, setSecond] = useState(parsed?.second || "00");
-
-  return (
-    <CalendarPanel
-      selected={date}
-      min={min}
-      max={max}
-      onSelect={setDate}
-      footer={(
-        <div className="mt-2 border-t border-app-border pt-2">
-          <div className="mb-2 flex items-center gap-1.5 text-xs text-app-subtle"><Clock3 aria-hidden="true" size={13} />时间</div>
-          <div className="grid grid-cols-3 gap-2 [&>button]:min-w-0 [&>button]:w-full">
-            <Select value={hour} onValueChange={setHour} ariaLabel="小时" options={hourValues.map((part) => ({ value: part, label: `${part} 时` }))} />
-            <Select value={minute} onValueChange={setMinute} ariaLabel="分钟" options={twoDigitValues.map((part) => ({ value: part, label: `${part} 分` }))} />
-            <Select value={second} onValueChange={setSecond} ariaLabel="秒" options={twoDigitValues.map((part) => ({ value: part, label: `${part} 秒` }))} />
-          </div>
-          <div className="mt-2 flex items-center justify-between gap-2">
-            {!required && value ? <button type="button" className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-app-subtle hover:bg-app-hover hover:text-app-foreground sm:h-7" onClick={onClear}><X aria-hidden="true" size={12} />清除</button> : <span />}
-            <button type="button" className="h-8 rounded-md bg-app-primary px-3 text-xs font-semibold text-white hover:bg-app-primary-hover sm:h-7" onClick={() => onCommit(`${date} ${hour}:${minute}:${second}`)}>确定</button>
-          </div>
-        </div>
-      )}
-    />
-  );
-}
-
-export const DateTimePicker = forwardRef<HTMLButtonElement, DateControlProps>(function DateTimePicker(
-  { value, onValueChange, min, max, placeholder = "选择日期和时间", required, ...triggerProps },
-  ref,
-) {
-  const [open, setOpen] = useState(false);
-  return (
-    <PopoverPrimitive.Root open={open} onOpenChange={setOpen}>
-      <PopoverPrimitive.Trigger asChild>
-        <DateTrigger ref={ref} value={value} placeholder={placeholder} aria-required={required} icon={<Clock3 aria-hidden="true" className="shrink-0 text-app-subtle" size={14} />} {...triggerProps} />
-      </PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Portal>
-        <PopoverPrimitive.Content aria-label={triggerProps["aria-label"] ?? "选择日期和时间"} onOpenAutoFocus={focusCalendar} align="start" sideOffset={4} collisionPadding={10} className="z-50 max-h-[var(--radix-popover-content-available-height)] overflow-y-auto rounded-lg border border-app-border bg-app-surface shadow-xl outline-none">
-          <DateTimePanel
-            value={value}
-            min={min}
-            max={max}
-            required={required}
-            onCommit={(nextValue) => { onValueChange(nextValue); setOpen(false); }}
-            onClear={() => { onValueChange(""); setOpen(false); }}
-          />
-        </PopoverPrimitive.Content>
-      </PopoverPrimitive.Portal>
-    </PopoverPrimitive.Root>
-  );
-});
-
-DateTimePicker.displayName = "DateTimePicker";

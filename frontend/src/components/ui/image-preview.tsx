@@ -5,7 +5,7 @@ import * as RadixDialog from "radix-ui/dialog";
 import { Button, cn } from "./primitives";
 import { Spinner } from "./spinner";
 
-export interface ImagePreviewItem {
+interface ImagePreviewItem {
   url: string;
   label: string;
 }

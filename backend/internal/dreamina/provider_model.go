@@ -127,9 +127,6 @@ func normalizeClaimDecision(raw any) ClaimDecision {
 	return decision
 }
 
-// Retain the original helper for callers that only need the status.
-func normalizeClaimStatus(raw any) ClaimStatus { return normalizeClaimDecision(raw).Status }
-
 // claimBusinessCode canonicalizes integer scalars without interpreting message
 // text as a business code. A malformed nonempty code remains unknown.
 func claimBusinessCode(raw any) (code string, present, numeric bool) {

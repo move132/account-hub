@@ -45,7 +45,7 @@ func TestClientCheckAndRefresh(t *testing.T) {
 	defer upstreamClient.CloseIdleConnections()
 	client := NewClientWithBases(upstreamClient, server.URL, server.URL)
 	profile, err := client.Check(ctx, "access-secret")
-	if err != nil || profile.Email != "user@example.com" || profile.UserID != "user_1" {
+	if err != nil || profile.Email != "user@example.com" {
 		t.Fatalf("Check: %+v err=%v", profile, err)
 	}
 	refreshed, err := client.Refresh(ctx, "old-session")

@@ -100,7 +100,7 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 			}
 			return targetsFromLabels(ids, labels)
 		})
-	jobScheduler := scheduler.NewWithSchedules(jobManager, nil, logger,
+	jobScheduler := scheduler.New(jobManager, logger,
 		scheduler.Schedule{TargetKind: "token", Source: tokenService, Policy: func(ctx context.Context) (bool, int, error) {
 			snapshot, err := settingRepository.Snapshot(ctx)
 			return snapshot.Token.Enabled, snapshot.Token.BatchSize, err

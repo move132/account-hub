@@ -1,6 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 import { api, jsonBody } from "../lib/api";
-export interface Session {
+interface Session {
   username: string;
   expires_at: number;
 }
@@ -9,7 +9,6 @@ interface AuthValue {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
-  reload: () => Promise<void>;
 }
 const AuthContext = createContext<AuthValue | null>(null);
 export function AuthProvider({ children }: {
@@ -38,7 +37,7 @@ export function AuthProvider({ children }: {
     await api("/api/v1/auth/logout", { method: "POST", ...jsonBody({}) });
     setSession(null);
   }, []);
-  const value = useMemo(() => ({ session, loading, login, logout, reload }), [session, loading, login, logout, reload]);
+  const value = useMemo(() => ({ session, loading, login, logout }), [session, loading, login, logout]);
   return <AuthContext.Provider value={value}>
     {children}</AuthContext.Provider>;
 }
