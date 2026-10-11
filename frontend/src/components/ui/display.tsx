@@ -96,9 +96,9 @@ export function DataTable<T extends {
     <table className="w-full min-w-[880px] border-collapse text-left tabular-nums">
       <thead>
         <tr className="border-b border-app-border text-xs uppercase tracking-wide text-app-subtle">
-          {selectable && <th className="w-10 px-4 py-2">
+          {selectable && <th className="w-10 px-4 py-4">
             <Checkbox label="选择全部" checked={allSelected} disabled={selectableRows.length === 0} onCheckedChange={toggleAll} />
-          </th>}{columns.map((column) => <th key={column.key} className={cn("px-3 py-2 font-medium", column.className)}>
+          </th>}{columns.map((column) => <th key={column.key} className={cn("px-3 py-4 font-bold", column.className)}>
             {column.header}</th>)}</tr>
       </thead>
       <tbody>

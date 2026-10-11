@@ -15,7 +15,7 @@ import (
 	"time"
 
 	"account-hub/internal/platform/httpserver"
-	"account-hub/internal/settings"
+	"account-hub/internal/platform/netconfig"
 
 	xproxy "golang.org/x/net/proxy"
 )
@@ -49,8 +49,12 @@ func (e *Error) Error() string {
 func (e *Error) Unwrap() error     { return e.Cause }
 func (e *Error) ErrorCode() string { return e.Code }
 
+type ProxyConfigProvider interface {
+	ProxyConfig(context.Context) (netconfig.Proxy, error)
+}
+
 type Client struct {
-	settings *settings.Repository
+	proxy    ProxyConfigProvider
 	timeout  time.Duration
 	retries  int
 	logger   *slog.Logger
@@ -60,14 +64,14 @@ type Client struct {
 	browser  bool
 }
 
-func NewClient(repository *settings.Repository, timeout time.Duration, retries int) *Client {
-	return &Client{settings: repository, timeout: timeout, retries: retries, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+func NewClient(provider ProxyConfigProvider, timeout time.Duration, retries int) *Client {
+	return &Client{proxy: provider, timeout: timeout, retries: retries, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 // NewBrowserClient uses a Chrome TLS/HTTP fingerprint for outgoing requests.
 // Credentials remain explicit on each request; no shared cookie jar is used.
-func NewBrowserClient(repository *settings.Repository, timeout time.Duration, retries int) *Client {
-	client := NewClient(repository, timeout, retries)
+func NewBrowserClient(provider ProxyConfigProvider, timeout time.Duration, retries int) *Client {
+	client := NewClient(provider, timeout, retries)
 	client.browser = true
 	return client
 }
@@ -235,12 +239,11 @@ func safeURL(value *url.URL) string {
 }
 
 func (c *Client) httpClient(ctx context.Context) (*http.Client, error) {
-	values, err := c.settings.Values(ctx)
+	proxy, err := c.proxy.ProxyConfig(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("load proxy settings: %w", err)
 	}
-	enabled, _ := values["proxy_enabled"].(bool)
-	raw, _ := values["proxy_url"].(string)
+	enabled, raw := proxy.Enabled, proxy.URL
 	cacheKey := fmt.Sprintf("%t|%s", enabled, raw)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -297,9 +300,11 @@ func newStandardTransport(enabled bool, raw string) (*http.Transport, error) {
 			if err != nil {
 				return nil, fmt.Errorf("create SOCKS5 proxy: %w", err)
 			}
-			transport.DialContext = func(ctx context.Context, network, address string) (net.Conn, error) {
-				return dialer.Dial(network, address)
+			contextDialer, ok := dialer.(xproxy.ContextDialer)
+			if !ok {
+				return nil, errors.New("SOCKS5 proxy does not support context cancellation")
 			}
+			transport.DialContext = contextDialer.DialContext
 		default:
 			return nil, errors.New("unsupported proxy scheme")
 		}

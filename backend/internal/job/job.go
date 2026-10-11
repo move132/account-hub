@@ -12,32 +12,35 @@ import (
 	"sync"
 	"time"
 
+	"account-hub/internal/idempotency"
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/security"
 )
 
 var (
-	ErrNotFound            = errors.New("job not found")
-	ErrActive              = errors.New("active job cannot be deleted")
-	ErrNoSelection         = errors.New("no jobs selected")
-	ErrIdempotencyConflict = errors.New("idempotency key reused with different request")
+	ErrNotFound            = apperror.New(apperror.NotFound, "任务不存在")
+	ErrActive              = apperror.New(apperror.Conflict, "任务状态不允许此操作")
+	ErrNoSelection         = apperror.New(apperror.Validation, "至少选择一个任务")
+	ErrIdempotencyConflict = idempotency.ErrConflict
 )
 
 type Job struct {
-	ID          string `json:"id"`
-	TargetKind  string `json:"target_kind"`
-	Action      string `json:"action"`
-	State       string `json:"state"`
-	Total       int    `json:"total"`
-	Pending     int    `json:"pending"`
-	Running     int    `json:"running"`
-	Succeeded   int    `json:"succeeded"`
-	Failed      int    `json:"failed"`
-	Cancelled   int    `json:"cancelled"`
-	CreatedBy   string `json:"created_by,omitempty"`
-	CreatedAt   int64  `json:"created_at"`
-	StartedAt   *int64 `json:"started_at,omitempty"`
-	CompletedAt *int64 `json:"completed_at,omitempty"`
-	Items       []Item `json:"items,omitempty"`
+	ID              string `json:"id"`
+	TargetKind      string `json:"target_kind"`
+	Action          string `json:"action"`
+	State           string `json:"state"`
+	CancelRequested bool   `json:"cancel_requested,omitempty"`
+	Total           int    `json:"total"`
+	Pending         int    `json:"pending"`
+	Running         int    `json:"running"`
+	Succeeded       int    `json:"succeeded"`
+	Failed          int    `json:"failed"`
+	Cancelled       int    `json:"cancelled"`
+	CreatedBy       string `json:"created_by,omitempty"`
+	CreatedAt       int64  `json:"created_at"`
+	StartedAt       *int64 `json:"started_at,omitempty"`
+	CompletedAt     *int64 `json:"completed_at,omitempty"`
+	Items           []Item `json:"items,omitempty"`
 }
 
 type Item struct {
@@ -52,6 +55,20 @@ type Item struct {
 	ErrorMessage string `json:"error_message,omitempty"`
 	StartedAt    *int64 `json:"started_at,omitempty"`
 	CompletedAt  *int64 `json:"completed_at,omitempty"`
+	cooldown     time.Duration
+	targetKind   string
+	action       string
+}
+
+// Submission is the application-facing command shared by HTTP and scheduling.
+type Submission struct {
+	TargetKind, Action, ActorID, Route, IdempotencyKey, RequestHash string
+	Targets                                                         []Target
+}
+
+func (m *Manager) Submit(ctx context.Context, command Submission) (Job, bool, error) {
+	return m.Create(ctx, command.TargetKind, command.Action, command.ActorID, command.Route,
+		command.IdempotencyKey, command.RequestHash, command.Targets)
 }
 
 type Target struct {
@@ -69,23 +86,28 @@ type registeredExecutor struct {
 }
 
 type Manager struct {
-	db        *sql.DB
-	logger    *slog.Logger
-	mu        sync.RWMutex
-	executors map[string]registeredExecutor
-	wake      map[string]chan struct{}
+	db                *sql.DB
+	logger            *slog.Logger
+	mu                sync.RWMutex
+	executors         map[string]registeredExecutor
+	wake              map[string]chan struct{}
+	runMu             sync.Mutex
+	running           bool
+	ready             bool
+	completionTimeout time.Duration
 }
 
 func NewManager(db *sql.DB, logger *slog.Logger) *Manager {
-	return &Manager{db: db, logger: logger, executors: make(map[string]registeredExecutor), wake: map[string]chan struct{}{
-		"token": make(chan struct{}, 1), "dreamina": make(chan struct{}, 1),
-	}}
+	return &Manager{db: db, logger: logger, executors: make(map[string]registeredExecutor), wake: make(map[string]chan struct{}), completionTimeout: 5 * time.Second}
 }
 
 func (m *Manager) Register(targetKind, action string, executor Executor, delay Delay) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.executors[targetKind+":"+action] = registeredExecutor{execute: executor, delay: delay}
+	if _, ok := m.wake[targetKind]; !ok {
+		m.wake[targetKind] = make(chan struct{}, 1)
+	}
 }
 
 func RequestHash(value any) string {
@@ -96,27 +118,17 @@ func RequestHash(value any) string {
 
 func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route, idempotencyKey, requestHash string, targets []Target) (Job, bool, error) {
 	if len(targets) == 0 {
-		return Job{}, false, errors.New("至少选择一个目标")
+		return Job{}, false, apperror.New(apperror.Validation, "至少选择一个目标")
 	}
 	if _, found := m.executor(targetKind, action); !found {
-		return Job{}, false, fmt.Errorf("不支持的批量动作: %s", action)
+		return Job{}, false, apperror.New(apperror.Validation, fmt.Sprintf("不支持的批量动作: %s", action))
 	}
-	if idempotencyKey != "" {
-		_, _ = m.db.ExecContext(ctx, "DELETE FROM idempotency_keys WHERE expires_at <= ?", time.Now().UTC().UnixMilli())
-		var existingHash, jobID string
-		err := m.db.QueryRowContext(ctx, `SELECT request_hash, response_body FROM idempotency_keys
-            WHERE actor_id = ? AND route = ? AND key = ? AND expires_at > ?`, actorID, route, idempotencyKey, time.Now().UTC().UnixMilli()).Scan(&existingHash, &jobID)
-		if err == nil {
-			if existingHash != requestHash {
-				return Job{}, false, ErrIdempotencyConflict
-			}
-			job, err := m.Get(ctx, jobID, true)
-			return job, true, err
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return Job{}, false, err
-		}
+	key, err := idempotency.NormalizeKey(idempotencyKey)
+	if err != nil {
+		return Job{}, false, err
 	}
+	idempotencyKey = key
+	request := idempotency.Request{ActorID: actorID, Route: route, Key: key, Hash: requestHash}
 
 	jobID, err := security.RandomID("job")
 	if err != nil {
@@ -128,6 +140,27 @@ func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route
 		return Job{}, false, err
 	}
 	defer tx.Rollback()
+	store := idempotency.NewStore(m.db)
+	if idempotencyKey != "" {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM idempotency_keys WHERE actor_id=? AND route=? AND key=? AND expires_at<=?`, actorID, route, key, now); err != nil {
+			return Job{}, false, err
+		}
+		existing, found, err := store.LookupTx(ctx, tx, request)
+		if err != nil {
+			return Job{}, false, err
+		}
+		if found {
+			if existing.ResourceType != "job" || existing.ResourceID == "" {
+				return Job{}, false, idempotency.ErrUncertain
+			}
+			// Release the single SQLite connection before reading the committed job.
+			if err := tx.Rollback(); err != nil {
+				return Job{}, false, err
+			}
+			result, err := m.Get(ctx, existing.ResourceID, true)
+			return result, true, err
+		}
+	}
 	var actor any
 	if actorID != "" {
 		actor = actorID
@@ -141,9 +174,12 @@ func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route
 	for _, target := range targets {
 		var active int
 		if target.ID != "" {
-			_ = tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM job_items i JOIN jobs j ON j.id = i.job_id
+			err := tx.QueryRowContext(ctx, `SELECT COUNT(1) FROM job_items i JOIN jobs j ON j.id = i.job_id
                 WHERE i.target_id = ? AND j.target_kind = ? AND j.action = ?
                 AND i.state IN ('queued', 'running') AND j.state IN ('queued', 'running')`, target.ID, targetKind, action).Scan(&active)
+			if err != nil {
+				return Job{}, false, err
+			}
 		}
 		if active > 0 {
 			continue
@@ -152,7 +188,10 @@ func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route
 		if err != nil {
 			return Job{}, false, err
 		}
-		payload, _ := json.Marshal(target.Payload)
+		payload, err := json.Marshal(target.Payload)
+		if err != nil {
+			return Job{}, false, fmt.Errorf("encode job payload: %w", err)
+		}
 		if target.Payload == nil {
 			payload = []byte("{}")
 		}
@@ -164,7 +203,7 @@ func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route
 		created++
 	}
 	if created == 0 {
-		return Job{}, false, errors.New("所选目标已有相同的执行中任务")
+		return Job{}, false, apperror.New(apperror.Conflict, "所选目标已有相同的执行中任务")
 	}
 	if created != len(targets) {
 		if _, err := tx.ExecContext(ctx, "UPDATE jobs SET total = ?, pending = ? WHERE id = ?", created, created, jobID); err != nil {
@@ -172,13 +211,22 @@ func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route
 		}
 	}
 	if idempotencyKey != "" {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO idempotency_keys
-            (actor_id, route, key, request_hash, status_code, response_body, expires_at, created_at)
-            VALUES(?, ?, ?, ?, 202, ?, ?, ?)`, actorID, route, idempotencyKey, requestHash, jobID,
-			time.Now().UTC().Add(24*time.Hour).UnixMilli(), now); err != nil {
+		if err := store.PutTx(ctx, tx, request, idempotency.Result{Status: 202, ResourceType: "job", ResourceID: jobID}); err != nil {
 			return Job{}, false, err
 		}
 	}
+	// Imports enter through HTTP idempotency. Persist their operation reference
+	// with the job, before the response middleware can be interrupted.
+	recoveryBody, err := json.Marshal(map[string]any{"code": 202, "success": true, "data": map[string]any{
+		"job":      Job{ID: jobID, TargetKind: targetKind, Action: action, State: "queued", Total: created, Pending: created, CreatedBy: actorID, CreatedAt: now},
+		"accepted": created, "idempotent_replay": true}, "msg": "任务已创建", "ts": now})
+	if err != nil {
+		return Job{}, false, err
+	}
+	if err := idempotency.AttachResourceTx(ctx, tx, "job", jobID, string(recoveryBody)); err != nil {
+		return Job{}, false, err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return Job{}, false, err
 	}
@@ -187,178 +235,17 @@ func (m *Manager) Create(ctx context.Context, targetKind, action, actorID, route
 	return job, false, err
 }
 
-func (m *Manager) Start(ctx context.Context, scanInterval time.Duration, concurrency int) {
-	_, _ = m.db.ExecContext(ctx, "UPDATE job_items SET state = 'queued', started_at = NULL WHERE state = 'running'")
-	_, _ = m.db.ExecContext(ctx, "UPDATE jobs SET state = 'queued', running = 0, pending = total - succeeded - failed - cancelled WHERE state = 'running'")
-	if concurrency < 1 {
-		concurrency = 1
-	}
-	var workers sync.WaitGroup
-	for _, targetKind := range []string{"token", "dreamina"} {
-		for range concurrency {
-			workers.Add(1)
-			go func() {
-				defer workers.Done()
-				m.runLane(ctx, scanInterval, targetKind)
-			}()
-		}
-	}
-	workers.Wait()
-}
+const jobColumns = `id, target_kind, action, state, total, pending, running,
+    succeeded, failed, cancelled, created_by, created_at, started_at, completed_at, cancel_requested`
 
-func (m *Manager) runLane(ctx context.Context, scanInterval time.Duration, targetKind string) {
-	ticker := time.NewTicker(scanInterval)
-	defer ticker.Stop()
-	for {
-		worked := m.processOne(ctx, targetKind)
-		if worked {
-			continue
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		case <-m.wake[targetKind]:
-		}
-	}
-}
+type rowScanner interface{ Scan(...any) error }
 
-func (m *Manager) processOne(ctx context.Context, lane string) bool {
-	item, targetKind, action, found, err := m.claim(ctx, lane)
-	if err != nil {
-		m.logger.Error("claim job item", "error", err)
-		return false
-	}
-	if !found {
-		return false
-	}
-	registered, found := m.executor(targetKind, action)
-	var executeErr error
-	started := time.Now()
-	m.logger.Info("job item started", "job_id", item.JobID, "item_id", item.ID, "target_kind", targetKind, "action", action, "target_id", item.TargetID, "target_label", item.TargetLabel, "attempt", item.Attempts+1)
-	if !found {
-		executeErr = errors.New("job executor unavailable")
-	} else {
-		executeErr = registered.execute(ctx, item.TargetID, json.RawMessage(item.PayloadJSON))
-	}
-	if executeErr != nil {
-		code := "EXECUTION_FAILED"
-		var coded interface{ ErrorCode() string }
-		if errors.As(executeErr, &coded) && coded.ErrorCode() != "" {
-			code = coded.ErrorCode()
-		}
-		m.logger.Warn("job item failed", "job_id", item.JobID, "item_id", item.ID, "target_kind", targetKind, "action", action, "target_id", item.TargetID, "target_label", item.TargetLabel, "error_code", code, "error", executeErr, "elapsed_ms", time.Since(started).Milliseconds())
-	} else {
-		m.logger.Info("job item succeeded", "job_id", item.JobID, "item_id", item.ID, "target_kind", targetKind, "action", action, "target_id", item.TargetID, "target_label", item.TargetLabel, "elapsed_ms", time.Since(started).Milliseconds())
-	}
-	if err := m.finishItem(ctx, item, executeErr); err != nil {
-		m.logger.Error("finish job item", "job_id", item.JobID, "item_id", item.ID, "error", err)
-	}
-	if found && registered.delay != nil {
-		delay := registered.delay(ctx)
-		if delay > 0 {
-			select {
-			case <-ctx.Done():
-			case <-time.After(delay):
-			}
-		}
-	}
-	return true
-}
-
-func (m *Manager) claim(ctx context.Context, targetKindFilter string) (Item, string, string, bool, error) {
-	tx, err := m.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Item{}, "", "", false, err
-	}
-	defer tx.Rollback()
-	var item Item
-	var targetID sql.NullString
-	var targetKind, action string
-	err = tx.QueryRowContext(ctx, `SELECT i.id, i.job_id, i.target_id, i.target_label, i.payload_json,
-        i.state, i.attempts, j.target_kind, j.action FROM job_items i JOIN jobs j ON j.id = i.job_id
-		WHERE i.state = 'queued' AND j.state IN ('queued', 'running') AND j.target_kind = ?
-		ORDER BY j.created_at, i.rowid LIMIT 1`, targetKindFilter).
-		Scan(&item.ID, &item.JobID, &targetID, &item.TargetLabel, &item.PayloadJSON, &item.State, &item.Attempts, &targetKind, &action)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Item{}, "", "", false, nil
-	}
-	if err != nil {
-		return Item{}, "", "", false, err
-	}
-	item.TargetID = targetID.String
-	now := time.Now().UTC().UnixMilli()
-	if _, err := tx.ExecContext(ctx, "UPDATE job_items SET state = 'running', attempts = attempts + 1, started_at = ? WHERE id = ? AND state = 'queued'", now, item.ID); err != nil {
-		return Item{}, "", "", false, err
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'running', started_at = COALESCE(started_at, ?),
-        pending = pending - 1, running = running + 1 WHERE id = ?`, now, item.JobID); err != nil {
-		return Item{}, "", "", false, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Item{}, "", "", false, err
-	}
-	return item, targetKind, action, true, nil
-}
-
-func (m *Manager) finishItem(ctx context.Context, item Item, executeErr error) error {
-	tx, err := m.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	now := time.Now().UTC().UnixMilli()
-	state, code, message := "succeeded", "", ""
-	if executeErr != nil {
-		state, code, message = "failed", "EXECUTION_FAILED", executeErr.Error()
-		var coded interface{ ErrorCode() string }
-		if errors.As(executeErr, &coded) && coded.ErrorCode() != "" {
-			code = coded.ErrorCode()
-		}
-	}
-	if _, err := tx.ExecContext(ctx, `UPDATE job_items SET state = ?, error_code = NULLIF(?, ''),
-        error_message = NULLIF(?, ''), completed_at = ? WHERE id = ?`, state, code, message, now, item.ID); err != nil {
-		return err
-	}
-	if state == "succeeded" {
-		_, err = tx.ExecContext(ctx, "UPDATE jobs SET running = running - 1, succeeded = succeeded + 1 WHERE id = ?", item.JobID)
-	} else {
-		_, err = tx.ExecContext(ctx, "UPDATE jobs SET running = running - 1, failed = failed + 1 WHERE id = ?", item.JobID)
-	}
-	if err != nil {
-		return err
-	}
-	var currentState string
-	var pending, running, succeeded, failed, cancelled, total int
-	if err := tx.QueryRowContext(ctx, `SELECT state, pending, running, succeeded, failed, cancelled, total FROM jobs WHERE id = ?`, item.JobID).
-		Scan(&currentState, &pending, &running, &succeeded, &failed, &cancelled, &total); err != nil {
-		return err
-	}
-	if pending == 0 && running == 0 {
-		finalState := "succeeded"
-		switch {
-		case currentState == "cancelled" || cancelled == total:
-			finalState = "cancelled"
-		case failed == total:
-			finalState = "failed"
-		case failed > 0 || cancelled > 0:
-			finalState = "partially_succeeded"
-		}
-		if _, err := tx.ExecContext(ctx, "UPDATE jobs SET state = ?, completed_at = ? WHERE id = ?", finalState, now, item.JobID); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
-}
-
-func (m *Manager) Get(ctx context.Context, id string, withItems bool) (Job, error) {
+func scanJob(row rowScanner) (Job, error) {
 	var result Job
 	var createdBy sql.NullString
 	var started, completed sql.NullInt64
-	err := m.db.QueryRowContext(ctx, `SELECT id, target_kind, action, state, total, pending, running,
-        succeeded, failed, cancelled, created_by, created_at, started_at, completed_at FROM jobs WHERE id = ?`, id).
-		Scan(&result.ID, &result.TargetKind, &result.Action, &result.State, &result.Total, &result.Pending,
-			&result.Running, &result.Succeeded, &result.Failed, &result.Cancelled, &createdBy, &result.CreatedAt, &started, &completed)
+	err := row.Scan(&result.ID, &result.TargetKind, &result.Action, &result.State, &result.Total, &result.Pending, &result.Running,
+		&result.Succeeded, &result.Failed, &result.Cancelled, &createdBy, &result.CreatedAt, &started, &completed, &result.CancelRequested)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Job{}, ErrNotFound
 	}
@@ -372,16 +259,21 @@ func (m *Manager) Get(ctx context.Context, id string, withItems bool) (Job, erro
 	if completed.Valid {
 		result.CompletedAt = &completed.Int64
 	}
+	return result, nil
+}
+func (m *Manager) Get(ctx context.Context, id string, withItems bool) (Job, error) {
+	result, err := scanJob(m.db.QueryRowContext(ctx, "SELECT "+jobColumns+" FROM jobs WHERE id=?", id))
+	if err != nil {
+		return Job{}, err
+	}
 	if withItems {
-		items, err := m.items(ctx, id)
+		result.Items, err = m.items(ctx, id)
 		if err != nil {
 			return Job{}, err
 		}
-		result.Items = items
 	}
 	return result, nil
 }
-
 func (m *Manager) List(ctx context.Context, page, pageSize int) ([]Job, int, error) {
 	if page < 1 {
 		page = 1
@@ -393,29 +285,41 @@ func (m *Manager) List(ctx context.Context, page, pageSize int) ([]Job, int, err
 	if err := m.db.QueryRowContext(ctx, "SELECT COUNT(1) FROM jobs").Scan(&total); err != nil {
 		return nil, 0, err
 	}
-	rows, err := m.db.QueryContext(ctx, `SELECT id FROM jobs ORDER BY created_at DESC LIMIT ? OFFSET ?`, pageSize, (page-1)*pageSize)
+	rows, err := m.db.QueryContext(ctx, "SELECT "+jobColumns+" FROM jobs ORDER BY created_at DESC,id DESC LIMIT ? OFFSET ?", pageSize, (page-1)*pageSize)
 	if err != nil {
 		return nil, 0, err
 	}
-	var ids []string
+	defer rows.Close()
+	result := make([]Job, 0, pageSize)
 	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, 0, err
-		}
-		ids = append(ids, id)
-	}
-	rows.Close()
-	items := make([]Job, 0, len(ids))
-	for _, id := range ids {
-		item, err := m.Get(ctx, id, false)
+		item, err := scanJob(rows)
 		if err != nil {
 			return nil, 0, err
 		}
-		items = append(items, item)
+		result = append(result, item)
 	}
-	return items, total, nil
+	return result, total, rows.Err()
+}
+
+// Replay is intentionally called before resolving current target state. A
+// completed delete command remains replayable after its targets cease to exist.
+func (m *Manager) Replay(ctx context.Context, actor, route, key, hash string) (Job, bool, error) {
+	key, err := idempotency.NormalizeKey(key)
+	if err != nil {
+		return Job{}, false, err
+	}
+	if key == "" {
+		return Job{}, false, nil
+	}
+	record, found, err := idempotency.NewStore(m.db).Lookup(ctx, idempotency.Request{ActorID: actor, Route: route, Key: key, Hash: hash})
+	if err != nil || !found {
+		return Job{}, false, err
+	}
+	if record.ResourceType != "job" || record.ResourceID == "" {
+		return Job{}, false, idempotency.ErrUncertain
+	}
+	result, err := m.Get(ctx, record.ResourceID, true)
+	return result, true, err
 }
 
 func (m *Manager) items(ctx context.Context, jobID string) ([]Item, error) {
@@ -485,7 +389,7 @@ func (m *Manager) DeleteMany(ctx context.Context, ids []string) (int, error) {
 		}
 	}
 	for _, id := range unique {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM idempotency_keys WHERE response_body = ?", id); err != nil {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM idempotency_keys WHERE resource_type = 'job' AND resource_id = ?", id); err != nil {
 			return 0, err
 		}
 		result, err := tx.ExecContext(ctx, "DELETE FROM jobs WHERE id = ?", id)
@@ -506,37 +410,6 @@ func (m *Manager) DeleteMany(ctx context.Context, ids []string) (int, error) {
 	return len(unique), nil
 }
 
-func (m *Manager) Cancel(ctx context.Context, id string) (Job, error) {
-	tx, err := m.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Job{}, err
-	}
-	defer tx.Rollback()
-	result, err := tx.ExecContext(ctx, `UPDATE jobs SET state = 'cancelled', completed_at = ?
-        WHERE id = ? AND state IN ('queued', 'running')`, time.Now().UTC().UnixMilli(), id)
-	if err != nil {
-		return Job{}, err
-	}
-	changed, _ := result.RowsAffected()
-	if changed == 0 {
-		return Job{}, ErrNotFound
-	}
-	var count int
-	_ = tx.QueryRowContext(ctx, "SELECT COUNT(1) FROM job_items WHERE job_id = ? AND state = 'queued'", id).Scan(&count)
-	_, err = tx.ExecContext(ctx, "UPDATE job_items SET state = 'cancelled', completed_at = ? WHERE job_id = ? AND state = 'queued'", time.Now().UTC().UnixMilli(), id)
-	if err != nil {
-		return Job{}, err
-	}
-	_, err = tx.ExecContext(ctx, "UPDATE jobs SET pending = pending - ?, cancelled = cancelled + ? WHERE id = ?", count, count, id)
-	if err != nil {
-		return Job{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Job{}, err
-	}
-	return m.Get(ctx, id, true)
-}
-
 func (m *Manager) executor(kind, action string) (registeredExecutor, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -545,7 +418,9 @@ func (m *Manager) executor(kind, action string) (registeredExecutor, bool) {
 }
 
 func (m *Manager) signal(targetKind string) {
+	m.mu.RLock()
 	wake, found := m.wake[targetKind]
+	m.mu.RUnlock()
 	if !found {
 		return
 	}

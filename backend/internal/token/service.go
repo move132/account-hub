@@ -9,15 +9,21 @@ import (
 	"strings"
 	"time"
 
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/security"
 	"account-hub/internal/platform/upstream"
 	"account-hub/internal/settings"
 )
 
+type SettingsReader interface {
+	Snapshot(context.Context) (settings.Snapshot, error)
+}
+
 type Service struct {
 	repository *Repository
 	client     UpstreamClient
-	settings   *settings.Repository
+	settings   SettingsReader
+	now        func() time.Time
 	logger     *slog.Logger
 }
 
@@ -41,8 +47,8 @@ func (e *refreshError) Error() string {
 
 func (e *refreshError) Unwrap() error { return e.cause }
 
-func NewService(repository *Repository, client UpstreamClient, settingsRepository *settings.Repository) *Service {
-	return &Service{repository: repository, client: client, settings: settingsRepository, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+func NewService(repository *Repository, client UpstreamClient, settingsRepository SettingsReader) *Service {
+	return &Service{repository: repository, client: client, settings: settingsRepository, now: time.Now, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 func (s *Service) WithLogger(logger *slog.Logger) *Service {
@@ -69,22 +75,40 @@ func ToEditView(record Record) EditView {
 	return EditView{View: ToView(record), AccessToken: record.AccessToken, SessionToken: record.SessionToken}
 }
 
-func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
+func normalizeCreate(input CreateInput) (CreateInput, error) {
 	input.Name = strings.TrimSpace(input.Name)
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.AccessToken = strings.TrimSpace(strings.TrimPrefix(input.AccessToken, "Bearer "))
 	input.SessionToken = strings.TrimSpace(input.SessionToken)
 	input.Note = strings.TrimSpace(input.Note)
 	if input.AccessToken == "" {
-		return View{}, errors.New("access_token 不能为空")
+		return CreateInput{}, apperror.New(apperror.Validation, "access_token 不能为空")
 	}
 	if err := validateLengths(input.Name, input.Email, input.AccessToken, input.SessionToken, input.Note); err != nil {
-		return View{}, err
+		return CreateInput{}, err
 	}
 	if input.Status != "" && input.Status != "enabled" && input.Status != "disabled" {
-		return View{}, errors.New("status 只能是 enabled 或 disabled")
+		return CreateInput{}, apperror.New(apperror.Validation, "status 只能是 enabled 或 disabled")
 	}
-	record, err := s.repository.Create(ctx, input)
+
+	return input, nil
+}
+
+func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
+	normalized, err := normalizeCreate(input)
+	if err != nil {
+		return View{}, err
+	}
+	record, err := s.repository.Create(ctx, normalized)
+	return ToView(record), err
+}
+
+func (s *Service) createWithCommit(ctx context.Context, input CreateInput, after func(context.Context, *sql.Tx, View) error) (View, error) {
+	normalized, err := normalizeCreate(input)
+	if err != nil {
+		return View{}, err
+	}
+	record, err := s.repository.CreateWithCommit(ctx, normalized, func(ctx context.Context, tx *sql.Tx, record Record) error { return after(ctx, tx, ToView(record)) })
 	return ToView(record), err
 }
 
@@ -118,7 +142,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 	if input.AccessToken != nil {
 		trimmed := strings.TrimSpace(strings.TrimPrefix(*input.AccessToken, "Bearer "))
 		if trimmed == "" {
-			return View{}, errors.New("access_token 不能为空")
+			return View{}, apperror.New(apperror.Validation, "access_token 不能为空")
 		}
 		input.AccessToken = &trimmed
 	}
@@ -127,7 +151,7 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 		input.Email = &normalized
 	}
 	if input.Status != nil && *input.Status != "enabled" && *input.Status != "disabled" {
-		return View{}, errors.New("status 只能是 enabled 或 disabled")
+		return View{}, apperror.New(apperror.Validation, "status 只能是 enabled 或 disabled")
 	}
 	if err := validateOptionalLengths(input); err != nil {
 		return View{}, err
@@ -139,15 +163,15 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 func validateLengths(name, email, accessToken, sessionToken, note string) error {
 	switch {
 	case len([]rune(name)) > 200:
-		return errors.New("name 不能超过 200 个字符")
+		return apperror.New(apperror.Validation, "name 不能超过 200 个字符")
 	case len([]rune(email)) > 320:
-		return errors.New("email 不能超过 320 个字符")
+		return apperror.New(apperror.Validation, "email 不能超过 320 个字符")
 	case len(accessToken) > 256*1024:
-		return errors.New("access_token 不能超过 256 KB")
+		return apperror.New(apperror.Validation, "access_token 不能超过 256 KB")
 	case len(sessionToken) > 256*1024:
-		return errors.New("session_token 不能超过 256 KB")
+		return apperror.New(apperror.Validation, "session_token 不能超过 256 KB")
 	case len([]rune(note)) > 2000:
-		return errors.New("note 不能超过 2000 个字符")
+		return apperror.New(apperror.Validation, "note 不能超过 2000 个字符")
 	}
 	return nil
 }
@@ -179,33 +203,35 @@ func (s *Service) Check(ctx context.Context, id string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	startedAt := time.Now()
-	s.logger.Info("token check started", "token_id", id, "target", label(record), "status", record.Status, "has_session_token", record.SessionToken != "")
-	started := time.Now().UTC().UnixMilli()
-	profile, checkErr := s.client.Check(ctx, record.AccessToken)
-	completed := time.Now().UTC().UnixMilli()
-	attempt := Attempt{TokenID: id, TargetLabel: label(record), Operation: "check", StartedAt: started, CompletedAt: &completed}
-	attempt.ID, _ = security.RandomID("ta")
-	if checkErr != nil {
-		code := upstream.Code(checkErr)
-		state := "error"
-		if code == upstream.InvalidCredentials {
-			state = "invalid"
-		}
-		_ = s.repository.UpdateCheck(ctx, id, state, "", code, checkErr.Error())
-		attempt.Status, attempt.ErrorCode, attempt.ErrorMessage = "failed", code, checkErr.Error()
-		_ = s.repository.RecordAttempt(ctx, attempt)
-		s.logger.Warn("token check failed", "token_id", id, "target", label(record), "state", state, "error_code", code, "error", checkErr, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return View{}, checkErr
+	if completed, err := s.repository.operationCompleted(ctx, id, "check"); err != nil {
+		return View{}, err
+	} else if completed {
+		return ToView(record), nil
 	}
-	if err := s.repository.UpdateCheck(ctx, id, "valid", profile.Email, "", ""); err != nil {
-		s.logger.Error("token check database update failed", "token_id", id, "target", label(record), "error", err, "elapsed_ms", time.Since(startedAt).Milliseconds())
+	attempt, err := s.newAttempt(ctx, record, "check")
+	if err != nil {
 		return View{}, err
 	}
-	attempt.Status = "succeeded"
-	_ = s.repository.RecordAttempt(ctx, attempt)
-	s.logger.Info("token check succeeded", "token_id", id, "target", label(record), "email", profile.Email, "user_id", profile.UserID, "elapsed_ms", time.Since(startedAt).Milliseconds())
-	return s.Get(ctx, id)
+	profile, operationErr := s.client.Check(ctx, record.AccessToken)
+	s.finishAttempt(&attempt, operationErr)
+	state := "valid"
+	if operationErr != nil {
+		state = "error"
+		if upstream.Code(operationErr) == upstream.InvalidCredentials {
+			state = "invalid"
+		}
+	}
+	writeCtx, cancel := completionContext(ctx)
+	defer cancel()
+	updated, err := s.repository.CompleteCheck(writeCtx, record, state, profile.Email, attempt.ErrorCode, attempt.ErrorMessage, attempt)
+	if err != nil {
+		s.logger.Error("token check outcome could not be committed", "token_id", id, "error", err)
+		return View{}, err
+	}
+	if operationErr != nil {
+		return ToView(updated), operationErr
+	}
+	return ToView(updated), nil
 }
 
 func (s *Service) Refresh(ctx context.Context, id string) (View, error) {
@@ -213,45 +239,59 @@ func (s *Service) Refresh(ctx context.Context, id string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
+	if completed, err := s.repository.operationCompleted(ctx, id, "refresh"); err != nil {
+		return View{}, err
+	} else if completed {
+		return ToView(record), nil
+	}
 	if record.SessionToken == "" {
-		s.logger.Warn("token refresh skipped", "token_id", id, "target", label(record), "reason", "missing_session_token")
-		return View{}, errors.New("该记录没有 session_token")
+		return View{}, apperror.New(apperror.Validation, "该记录没有 session_token")
 	}
-	startedAt := time.Now()
-	s.logger.Info("token refresh started", "token_id", id, "target", label(record), "status", record.Status)
-	started := time.Now().UTC().UnixMilli()
-	result, refreshErr := s.client.Refresh(ctx, record.SessionToken)
-	var profile Profile
-	if refreshErr != nil {
-		refreshErr = &refreshError{stage: refreshStageSession, cause: refreshErr}
-	} else {
-		s.logger.Info("token refresh received access token, validating profile", "token_id", id, "target", label(record), "expires", result.Expires, "session_rotated", result.SessionToken != record.SessionToken)
-		profile, refreshErr = s.client.Check(ctx, result.AccessToken)
-		if refreshErr != nil {
-			refreshErr = &refreshError{stage: refreshStageProfile, cause: refreshErr}
-		}
-	}
-	completed := time.Now().UTC().UnixMilli()
-	attempt := Attempt{TokenID: id, TargetLabel: label(record), Operation: "refresh", StartedAt: started, CompletedAt: &completed}
-	attempt.ID, _ = security.RandomID("ta")
-	interval := s.intSetting(ctx, "token_refresh_interval_hours", 168)
-	next := time.Now().UTC().Add(time.Duration(interval) * time.Hour).UnixMilli()
-	if refreshErr != nil {
-		code := upstream.Code(refreshErr)
-		_ = s.repository.SetNextRefresh(ctx, id, next, code, refreshErr.Error())
-		attempt.Status, attempt.ErrorCode, attempt.ErrorMessage = "failed", code, refreshErr.Error()
-		_ = s.repository.RecordAttempt(ctx, attempt)
-		s.logger.Warn("token refresh failed", "token_id", id, "target", label(record), "error_code", code, "error", refreshErr, "next_refresh_at", next, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return View{}, refreshErr
-	}
-	if err := s.repository.UpdateRefresh(ctx, id, result, profile, next); err != nil {
-		s.logger.Error("token refresh database update failed", "token_id", id, "target", label(record), "error", err, "elapsed_ms", time.Since(startedAt).Milliseconds())
+	attempt, err := s.newAttempt(ctx, record, "refresh")
+	if err != nil {
 		return View{}, err
 	}
-	attempt.Status = "succeeded"
-	_ = s.repository.RecordAttempt(ctx, attempt)
-	s.logger.Info("token refresh succeeded", "token_id", id, "target", label(record), "email", profile.Email, "expires", result.Expires, "next_refresh_at", next, "elapsed_ms", time.Since(startedAt).Milliseconds())
-	return s.Get(ctx, id)
+	result, operationErr := s.client.Refresh(ctx, record.SessionToken)
+	var profile Profile
+	if operationErr != nil {
+		operationErr = &refreshError{stage: refreshStageSession, cause: operationErr}
+	} else {
+		profile, operationErr = s.client.Check(ctx, result.AccessToken)
+		if operationErr != nil {
+			operationErr = &refreshError{stage: refreshStageProfile, cause: operationErr}
+		}
+	}
+	s.finishAttempt(&attempt, operationErr)
+	writeCtx, cancel := completionContext(ctx)
+	defer cancel()
+	next := refreshDeadline(ctx, record, s.now().UTC(), s.refreshInterval(writeCtx), operationErr)
+	updated, err := s.repository.CompleteRefresh(writeCtx, record, result, profile, next, attempt)
+	if err != nil {
+		s.logger.Error("token refresh outcome could not be committed", "token_id", id, "error", err, "upstream_succeeded", operationErr == nil)
+		return View{}, err
+	}
+	if operationErr != nil {
+		return ToView(updated), operationErr
+	}
+	s.logger.Info("token refresh succeeded", "token_id", id, "next_refresh_at", next)
+	return ToView(updated), nil
+}
+
+func (s *Service) newAttempt(ctx context.Context, record Record, operation string) (Attempt, error) {
+	id, err := security.RandomID("ta")
+	if err != nil {
+		return Attempt{}, err
+	}
+	return Attempt{ID: id, OperationKey: operationKey(ctx), TokenID: record.ID, TargetLabel: label(record), Operation: operation, StartedAt: s.now().UTC().UnixMilli()}, nil
+}
+
+func (s *Service) finishAttempt(attempt *Attempt, operationErr error) {
+	completed := s.now().UTC().UnixMilli()
+	attempt.CompletedAt, attempt.Status = &completed, "succeeded"
+	if operationErr != nil {
+		attempt.OperationKey = ""
+		attempt.Status, attempt.ErrorCode, attempt.ErrorMessage = "failed", upstream.Code(operationErr), operationErr.Error()
+	}
 }
 
 func (s *Service) Attempts(ctx context.Context, id string, limit int) ([]Attempt, error) {
@@ -266,18 +306,16 @@ func (s *Service) SetStatus(ctx context.Context, id, status string) error {
 }
 
 func (s *Service) DueIDs(ctx context.Context, limit int) ([]string, error) {
-	return s.repository.DueIDs(ctx, time.Now().UTC().UnixMilli(), limit)
+	return s.repository.DueIDs(ctx, s.now().UTC().UnixMilli(), limit)
 }
 
-func (s *Service) intSetting(ctx context.Context, key string, fallback int) int {
-	values, err := s.settings.Values(ctx)
+func (s *Service) refreshInterval(ctx context.Context) time.Duration {
+	snapshot, err := s.settings.Snapshot(ctx)
 	if err != nil {
-		return fallback
+		s.logger.Warn("read refresh policy", "error", err)
+		return 7 * 24 * time.Hour
 	}
-	if value, ok := values[key].(int); ok {
-		return value
-	}
-	return fallback
+	return snapshot.Token.Interval
 }
 
 func label(record Record) string {
@@ -290,7 +328,7 @@ func label(record Record) string {
 	return record.ID
 }
 
-func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+func IsNotFound(err error) bool { return errors.Is(err, ErrNotFound) || errors.Is(err, sql.ErrNoRows) }
 func ErrorCode(err error) string {
 	if errors.Is(err, ErrVersionConflict) {
 		return "VERSION_CONFLICT"
@@ -298,5 +336,16 @@ func ErrorCode(err error) string {
 	if IsNotFound(err) {
 		return "TOKEN_NOT_FOUND"
 	}
-	return upstream.Code(err)
+	var providerErr *upstream.Error
+	if errors.As(err, &providerErr) {
+		return providerErr.Code
+	}
+	switch apperror.KindOf(err) {
+	case apperror.Validation:
+		return "VALIDATION_FAILED"
+	case apperror.Conflict:
+		return "VERSION_CONFLICT"
+	default:
+		return "INTERNAL_ERROR"
+	}
 }

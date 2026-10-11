@@ -30,17 +30,34 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
-	go func() {
-		<-stop
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := application.Shutdown(ctx); err != nil {
-			logger.Error("shutdown failed", "error", err)
-		}
-	}()
+	defer signal.Stop(stop)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- application.Run(listener) }()
 
-	if err := application.Run(listener); err != nil {
-		logger.Error("server stopped", "error", err)
+	var serveErr error
+	serveReturned := false
+	select {
+	case <-stop:
+	case serveErr = <-serveDone:
+		serveReturned = true
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	shutdownErr := application.Shutdown(ctx)
+	if !serveReturned {
+		select {
+		case serveErr = <-serveDone:
+		case <-ctx.Done():
+			serveErr = ctx.Err()
+		}
+	}
+	if shutdownErr != nil {
+		logger.Error("shutdown failed", "error", shutdownErr)
+	}
+	if serveErr != nil {
+		logger.Error("server stopped", "error", serveErr)
+	}
+	if serveErr != nil || shutdownErr != nil {
 		os.Exit(1)
 	}
 }

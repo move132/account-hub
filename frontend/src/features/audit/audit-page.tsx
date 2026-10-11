@@ -5,6 +5,7 @@ import { parsePageSize } from "../../lib/pagination";
 import { auditActionLabel, targetKindLabel } from "../../lib/status-labels";
 interface AuditEntry extends Record<string, unknown> {
   id: string;
+  api_key_id?: string;
   action: string;
   target_kind: string;
   target_id?: string;
@@ -45,10 +46,11 @@ export function AuditPage() {
           {entry.summary}</p>
         <p className="mt-1 font-mono text-xs text-app-subtle">
           {auditActionLabel(entry.action)}</p>
+        {entry.api_key_id && <p className="mt-1 break-all font-mono text-xs text-app-subtle">API Key：{entry.api_key_id}</p>}
       </div>
     },
     {
-      key: "target", header: "目标", render: (entry) => <div className="gap-1">
+      key: "target", header: "目标", render: (entry) => <div className="flex gap-1">
         <Badge>{targetKindLabel(entry.target_kind)}</Badge>
         <span className="mt-1 max-w-60 truncate font-mono text-xs text-app-subtle">
           {entry.target_id || ""}

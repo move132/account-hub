@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { Badge, Button, Card, CardHeader, ConfirmDialog, PageHeader, Spinner, useToast } from "../../components/ui";
 import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel, operationLabel, resultStatusLabel } from "../../lib/status-labels";
 import { formatTime, type Attempt, type DreaminaView } from "./types";
 import { DreaminaAssetsDialog } from "./dreamina-assets-dialog";
+import { claimErrorFeedback, claimFeedback, claimOperationFromError, readClaimOperation, type ClaimOperation } from "./claim-feedback";
 export function DreaminaDetailPage() {
   const { id = "" } = useParams();
   const [item, setItem] = useState<DreaminaView | null>(null);
@@ -13,6 +14,8 @@ export function DreaminaDetailPage() {
   const [claimOpen, setClaimOpen] = useState(false);
   const [assetsOpen, setAssetsOpen] = useState(false);
   const [claimKey, setClaimKey] = useState("");
+  const [claiming, setClaiming] = useState(false);
+  const claimingRef = useRef(false);
   const { notify } = useToast();
   const load = useCallback(async () => {
     setLoading(true);
@@ -36,6 +39,7 @@ export function DreaminaDetailPage() {
     }
   }, [id, notify]);
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setClaimKey(""); setClaimOpen(false); }, [id]);
   const run = async (action: "checks" | "refreshes") => {
     try {
       await api(`/api/v1/dreamina/accounts/${id}/${action}`, { method: "POST", headers: { "Idempotency-Key": createRequestId() }, ...jsonBody({}) });
@@ -59,14 +63,36 @@ export function DreaminaDetailPage() {
     }
   };
   const claim = async () => {
+    // The ref closes the gap before React renders the disabled confirmation button.
+    if (claimingRef.current) return;
+    claimingRef.current = true;
+    setClaiming(true);
+    const key = claimKey || createRequestId();
+    setClaimKey(key);
+    let operation: ClaimOperation | undefined;
     try {
-      await api(`/api/v1/dreamina/accounts/${id}/credit-claims`, { method: "POST", headers: { "Idempotency-Key": claimKey || createRequestId() }, ...jsonBody({}) });
-      notify("积分领取成功");
-      setClaimOpen(false);
-      await load();
+      const data = await api<{ operation?: unknown }>(`/api/v1/dreamina/accounts/${id}/credit-claims`, { method: "POST", headers: { "Idempotency-Key": key }, ...jsonBody({}) });
+      operation = readClaimOperation(data.operation);
+      const feedback = claimFeedback(operation);
+      notify(feedback.title, feedback.description, feedback.tone);
+      if (feedback.status !== "unconfirmed") setClaimKey("");
     }
     catch (error) {
-      notify("积分领取失败", errorMessage(error), "danger");
+      operation = claimOperationFromError(error);
+      const feedback = claimErrorFeedback(error);
+      notify(feedback.title, feedback.description, feedback.tone);
+      if (feedback.status !== "unconfirmed") setClaimKey("");
+    }
+    finally {
+      setClaimOpen(false);
+      await load();
+      // A confirmed balance read is useful even if saving it locally failed.
+      if (operation?.balance_refreshed && operation.balance?.trim()) {
+        const balance = operation.balance;
+        setItem((current) => current?.id === id ? { ...current, credit_balance: balance } : current);
+      }
+      claimingRef.current = false;
+      setClaiming(false);
     }
   };
   if (loading)
@@ -100,7 +126,7 @@ export function DreaminaDetailPage() {
         </dl>
         <div className="flex flex-wrap gap-2">
           <Button size="sm" disabled={!item.has_session_id} onClick={() => void queryCredit()}>查询积分</Button>
-          <Button size="sm" disabled={!item.has_session_id} onClick={() => { setClaimKey(createRequestId()); setClaimOpen(true); }}>领取积分</Button>
+          <Button size="sm" disabled={!item.has_session_id || claiming} onClick={() => { setClaimKey((current) => current || createRequestId()); setClaimOpen(true); }}>领取积分</Button>
           <Button size="sm" disabled={!item.has_session_id} onClick={() => setAssetsOpen(true)}>查看历史作品</Button>
         </div>
       </div>
@@ -112,8 +138,8 @@ export function DreaminaDetailPage() {
         {attempts.length ? attempts.map((attempt) => <div key={attempt.id} className="grid gap-2 px-4 py-3 sm:grid-cols-[140px_120px_1fr_180px]">
           <span>
             {operationLabel(attempt.operation)}</span>
-          <Badge tone={attempt.status === "succeeded" ? "success" : "danger"}>
-            {resultStatusLabel(attempt.status)}</Badge>
+          <Badge tone={attempt.error_code === "CLAIM_OUTCOME_UNCONFIRMED" ? "warning" : attempt.status === "succeeded" ? "success" : "danger"}>
+            {attempt.error_code === "CLAIM_OUTCOME_UNCONFIRMED" ? "待确认" : resultStatusLabel(attempt.status)}</Badge>
           <span className="text-sm text-app-subtle">
             {attempt.error_message || ""}</span>
           <span className="text-xs text-app-subtle">
@@ -121,9 +147,8 @@ export function DreaminaDetailPage() {
         </div>) : <p className="p-4 text-app-subtle">暂无执行记录</p>}</div>
     </Card>
     <ConfirmDialog open={claimOpen} onOpenChange={(open) => {
-      setClaimOpen(open); if (!open)
-        setClaimKey("");
-    }} title="领取即梦积分" description="该操作会调用即梦领取接口并产生真实副作用，确认继续吗？" confirmLabel="确认领取" onConfirm={() => void claim()} />
+      if (!claimingRef.current) setClaimOpen(open);
+    }} title="领取即梦积分" description="该操作会调用即梦领取接口并产生真实副作用，确认继续吗？" confirmLabel={claiming ? "领取中…" : "确认领取"} pending={claiming} onConfirm={() => void claim()} />
   </>;
 }
 function Info({ label, value, mono }: {

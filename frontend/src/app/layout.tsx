@@ -55,7 +55,7 @@ export function AppLayout() {
     <aside className="fixed inset-y-0 left-0 z-20 hidden w-56 flex-col border-r border-app-border bg-app-sidebar md:flex">
       <div className="flex h-16 items-center justify-between gap-2 px-4">
         <div className="flex min-w-0 items-center gap-2.5">
-          <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-md bg-app-primary text-black">
+          <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-md bg-app-primary text-white">
             <ShieldCheck className="size-[17px]" strokeWidth={2.2} />
           </span>
           <div className="min-w-0">

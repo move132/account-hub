@@ -7,5 +7,6 @@
 /frontend/.vite/
 .env
 /backend/.env
+*.api-key.key
 *.log
 coverage.out

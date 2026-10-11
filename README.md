@@ -113,6 +113,121 @@ user@example.com,password-value,session-value,,enabled,
 
 即梦点击“导出启用 Session”会下载 ZIP：每 300 个启用且非空的 Session ID 生成一个范围命名的 TXT，并额外生成包含全部 Session 的 `session-all.txt`；文件内使用 `|` 分隔 Session ID。
 
+## API Key
+
+在“系统设置 → API Key 管理”中点击“新增 Key”，输入名称（最多 15 个字符）并保存。列表显示脱敏值，点击 Key 旁的“复制”即可复制完整 Key，刷新页面或重启服务后仍可复制。删除后，该 Key 的后续请求立即失效。Key 持续有效到被删除，数据库保存鉴权哈希、展示用的部分字符和加密后的完整值。
+
+列表点击复制会直接请求后端，不根据列表元数据提前拦截。复制接口没有可读取的完整值时返回不可用，原有接口调用能力不受影响。
+
+本地开发时，前端热更新不会重启 Go 后端。更新涉及 Key 存储的后端代码后，应重新运行 `sh ./run.sh` 再创建 Key；在旧后端进程中生成的 Key 不会因之后重启而自动补回完整值。
+
+列表的“最近使用时间”记录 Key 最近一次成功通过接口鉴权的时间，按北京时间显示，尚未使用时显示“未使用”。业务操作失败但鉴权成功的请求也计入使用；查看设置、复制 Key 或使用 Cookie 调用不会更新此时间。
+
+API Key 直接用于现有 Token 接口，通过请求头 `Authorization: Bearer <API Key>` 鉴权：
+
+| 操作 | 接口 |
+| --- | --- |
+| 列表、详情 | `GET /api/v1/tokens`、`GET /api/v1/tokens/{id}` |
+| 新增 | `POST /api/v1/tokens` |
+| 修改 | `PATCH /api/v1/tokens/{id}` |
+| 删除 | `DELETE /api/v1/tokens/{id}` |
+| 检查、刷新 | `POST /api/v1/tokens/{id}/checks`、`POST /api/v1/tokens/{id}/refreshes` |
+
+下面的 curl 示例适用于 macOS / Linux Shell。使用 API Key 调用这 7 个接口时不需要 Cookie 或 CSRF。先替换地址、完整 Key 和账号 ID，再按需执行各条命令：
+
+```sh
+BASE_URL='http://127.0.0.1:8500'
+API_KEY='ahk_替换为你的完整APIKey'
+TOKEN_ID='tok_替换为账号ID'
+```
+
+```sh
+# 1. 查询账号列表
+curl -sS --get "$BASE_URL/api/v1/tokens" \
+  -H "Authorization: Bearer $API_KEY" \
+  --data-urlencode 'page=1' \
+  --data-urlencode 'page_size=20'
+
+
+# 2. 查询账号详情
+curl -sS "$BASE_URL/api/v1/tokens/$TOKEN_ID" \
+  -H "Authorization: Bearer $API_KEY"
+
+
+# 3. 新增账号
+curl -sS -X POST "$BASE_URL/api/v1/tokens" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  -H 'Idempotency-Key: create-token-001' \
+  --data-raw '{
+    "name": "测试账号",
+    "email": "user@example.com",
+    "access_token": "替换为账号的AccessToken",
+    "session_token": "替换为账号的SessionToken",
+    "status": "enabled",
+    "note": "通过API创建"
+  }'
+
+
+# 4. 修改账号
+# 将 version 改成详情接口 data.token.version 返回的最新值
+curl -sS -X PATCH "$BASE_URL/api/v1/tokens/$TOKEN_ID" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Content-Type: application/json' \
+  --data-raw '{
+    "version": 1,
+    "name": "修改后的账号名称",
+    "status": "enabled",
+    "note": "通过API更新"
+  }'
+
+
+# 5. 检查账号凭据（不需要请求体）
+curl -sS -X POST "$BASE_URL/api/v1/tokens/$TOKEN_ID/checks" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Idempotency-Key: check-token-001'
+
+
+# 6. 刷新账号凭据（不需要请求体）
+# 账号需要已保存有效的 session_token
+curl -sS -X POST "$BASE_URL/api/v1/tokens/$TOKEN_ID/refreshes" \
+  -H "Authorization: Bearer $API_KEY" \
+  -H 'Idempotency-Key: refresh-token-001'
+
+
+# 7. 删除账号
+curl -sS -X DELETE "$BASE_URL/api/v1/tokens/$TOKEN_ID" \
+  -H "Authorization: Bearer $API_KEY"
+```
+
+参数与返回说明：
+
+- 请求头的 API Key 是 Account Hub 调用凭证，请求体的 `access_token` 和 `session_token` 是被管理账号的凭据。
+- 新增账号时 `access_token` 必填，`session_token` 可省略；创建成功返回 `201`，从 `data.token.id` 获取账号 ID。
+- 修改账号时 `version` 必填，使用详情接口 `data.token.version` 返回的最新值；其他字段按需提交，版本冲突返回 `409`。禁用账号可提交 `"status": "disabled"`。
+- 新增、检查和刷新支持可选的 `Idempotency-Key`。同一次操作重试时沿用相同值和请求内容；发起新操作时换一个值。每个 API Key 的幂等记录相互隔离。
+- 列表和详情返回脱敏凭据。
+
+上述接口同时支持原有 Cookie 登录态；Cookie 写请求仍校验 CSRF。提供 Authorization 请求头时必须使用有效 API Key，否则返回 `401`，不回退到 Cookie。API Key 不授权设置、密码、导入导出、内容、任务或即梦账号接口；这些接口继续使用管理员登录态。
+
+Key 管理复用 `GET/PATCH /api/v1/settings`，由管理员 Cookie 与 CSRF 保护：GET 增加 `data.api_keys`；PATCH 的 Key 操作独立提交，不与 `settings` 更新混用。
+
+```json
+{"api_key_action":{"action":"create","name":"自动化脚本"}}
+```
+
+创建返回 `201`，`data.api_key` 为脱敏元数据，`data.secret` 为完整 Key。完整 Key 仅在创建成功时显示并可复制，请立即保存；关闭弹窗、刷新页面或重启后无法再次查看。列表只展示脱敏 Key，管理操作仅支持新增和删除。
+
+完整 Key 不进入数据库、列表、日志或持久化响应缓存。删除提交：
+
+```json
+{"api_key_action":{"action":"delete","id":"key_对应ID"}}
+```
+
+迁移 `003_account_operations.sql` 统一包含本次账号操作、任务执行和 API Key 功能的数据库变更，应用启动时自动执行。独立的 Key 表保存哈希、脱敏值、名称及时间信息，并为审计日志增加 API Key 身份字段。删除保留历史身份信息，审计日志可追溯使用过的 Key。
+
+Key 使用 32 字节安全随机数生成，接口鉴权通过 SHA-256 哈希匹配，不使用可逆加密，也不生成或依赖独立密钥文件。旧数据库启动时会移除此前保存密文的字段，保留原有哈希，因此已有 Key 的接口调用能力保持有效；旧的 `account-hub.db.api-key.key` 文件可删除。
+
 ## 固定运行参数
 
 - HTTP：`0.0.0.0:8500`
@@ -122,3 +237,7 @@ user@example.com,password-value,session-value,,enabled,
 - 上游超时：30 秒
 - 临时错误重试：2 次；积分领取不自动重试
 - Job 扫描：5 秒
+
+## 后端架构
+
+后端模块职责、任务恢复与幂等语义、数据库迁移和验证方式见 [后端架构与运行契约](backend/ARCHITECTURE.md)。

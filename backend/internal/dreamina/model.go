@@ -1,23 +1,25 @@
 package dreamina
 
 type Record struct {
-	ID               string
-	Email            string
-	Password         string
-	SessionID        string
-	SessionExpiresAt string
-	Status           string
-	CheckState       string
-	CreditBalance    string
-	Note             string
-	NextRefreshAt    *int64
-	LastCheckedAt    *int64
-	LastRefreshedAt  *int64
-	LastErrorCode    string
-	LastErrorMessage string
-	Version          int
-	CreatedAt        int64
-	UpdatedAt        int64
+	CredentialVersion int
+	RefreshFailures   int
+	ID                string
+	Email             string
+	Password          string
+	SessionID         string
+	SessionExpiresAt  string
+	Status            string
+	CheckState        string
+	CreditBalance     string
+	Note              string
+	NextRefreshAt     *int64
+	LastCheckedAt     *int64
+	LastRefreshedAt   *int64
+	LastErrorCode     string
+	LastErrorMessage  string
+	Version           int
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 type View struct {
@@ -75,6 +77,7 @@ type ListFilter struct {
 }
 
 type Attempt struct {
+	OperationKey string `json:"-"`
 	ID           string `json:"id"`
 	AccountID    string `json:"account_id,omitempty"`
 	TargetLabel  string `json:"target_label"`
@@ -94,4 +97,25 @@ type LoginResult struct {
 type CreditResult struct {
 	Balance string
 	Raw     any
+}
+
+// OperationWarning describes an auxiliary balance or persistence failure.
+// It never authorizes repeating the credit claim.
+type OperationWarning struct {
+	Stage   string `json:"stage"`
+	Code    string `json:"code"`
+	Message string `json:"message"`
+}
+
+type ClaimResult struct {
+	ProviderCode     string            `json:"provider_code,omitempty"`
+	Reason           string            `json:"reason,omitempty"`
+	BalanceRefreshed bool              `json:"balance_refreshed"`
+	Status           ClaimStatus       `json:"status"`
+	Claimed          bool              `json:"claimed"`
+	Upstream         any               `json:"-"`
+	RemoteCompleted  bool              `json:"remote_completed"`
+	Persisted        bool              `json:"persisted"`
+	Balance          string            `json:"balance,omitempty"`
+	Warning          *OperationWarning `json:"warning,omitempty"`
 }

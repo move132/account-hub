@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ func TestOpenMigratesFreshDatabase(t *testing.T) {
 	}
 	defer db.Close()
 
-	for _, table := range []string{"admins", "tokens", "dreamina_accounts", "jobs", "settings", "audit_logs", "idempotency_keys"} {
+	for _, table := range []string{"admins", "tokens", "dreamina_accounts", "jobs", "job_action_limits", "settings", "audit_logs", "idempotency_keys", "api_keys"} {
 		var found string
 		if err := db.QueryRow("SELECT name FROM sqlite_master WHERE type='table' AND name=?", table).Scan(&found); err != nil {
 			t.Fatalf("table %s missing: %v", table, err)
@@ -114,8 +115,18 @@ func TestSessionIdentityMigrationPreservesAccountsAndHistory(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reopening a migrated database failed: %v", err)
 	}
+	entries, err := migrationFiles.ReadDir("migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := 0
+	for _, entry := range entries {
+		if !entry.IsDir() && strings.HasSuffix(entry.Name(), ".sql") {
+			expected++
+		}
+	}
 	var count int
-	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil || count != 2 {
+	if err := db.QueryRow("SELECT COUNT(*) FROM schema_migrations").Scan(&count); err != nil || count != expected {
 		t.Fatalf("migration was not recorded exactly once: count=%d err=%v", count, err)
 	}
 }

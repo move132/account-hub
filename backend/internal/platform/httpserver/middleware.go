@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"bytes"
 	"context"
 	"log/slog"
 	"net/http"
@@ -15,10 +14,18 @@ import (
 type contextKey string
 
 const requestIDKey contextKey = "request_id"
+const loggerKey contextKey = "logger"
 
 func RequestID(ctx context.Context) string {
 	value, _ := ctx.Value(requestIDKey).(string)
 	return value
+}
+
+func Logger(ctx context.Context) *slog.Logger {
+	if logger, ok := ctx.Value(loggerKey).(*slog.Logger); ok {
+		return logger
+	}
+	return slog.Default()
 }
 
 func Middleware(logger *slog.Logger, next http.Handler) http.Handler {
@@ -28,78 +35,131 @@ func Middleware(logger *slog.Logger, next http.Handler) http.Handler {
 			requestID = "req_unavailable"
 		}
 		ctx := context.WithValue(r.Context(), requestIDKey, requestID)
+		ctx = context.WithValue(ctx, loggerKey, logger)
 		r = r.WithContext(ctx)
 		w.Header().Set("X-Request-ID", requestID)
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Referrer-Policy", "same-origin")
 		started := time.Now()
-		var guard *jsonGuard
-		var target http.ResponseWriter = w
+		tracked := &responseWriter{ResponseWriter: w}
+		var target http.ResponseWriter = tracked
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/health/") {
 			w.Header().Set("Cache-Control", "no-store")
-			guard = newJSONGuard()
-			target = guard
+			target = &jsonErrorWriter{ResponseWriter: tracked, request: r}
 		}
 		defer func() {
-			if recovered := recover(); recovered != nil {
+			recovered := recover()
+			committed := tracked.status != 0
+			if recovered != nil {
 				logger.Error("panic serving request", "request_id", requestID, "panic", recovered, "stack", string(debug.Stack()))
-				Error(w, r, http.StatusInternalServerError, "INTERNAL_ERROR", "服务器内部错误", nil)
-			} else if guard != nil {
-				guard.flush(w, r)
+				if tracked.status == 0 {
+					clearBodyHeaders(tracked.Header())
+					Error(tracked, r, http.StatusInternalServerError, "INTERNAL_ERROR", "服务器内部错误", nil)
+				}
 			}
-			logger.Info("http request", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "remote_addr", r.RemoteAddr, "elapsed_ms", time.Since(started).Milliseconds())
+			status := tracked.status
+			if status == 0 {
+				status = http.StatusOK
+			}
+			logger.Info("http request", "request_id", requestID, "method", r.Method, "path", r.URL.Path, "remote_addr", r.RemoteAddr, "status", status, "bytes", tracked.bytes, "elapsed_ms", time.Since(started).Milliseconds())
+			// A started stream cannot be replaced with a second JSON response. Let net/http abort it.
+			if recovered != nil && committed {
+				panic(http.ErrAbortHandler)
+			}
 		}()
 		next.ServeHTTP(target, r)
 	})
 }
 
-type jsonGuard struct {
-	header http.Header
+// responseWriter forwards each write immediately and records the actual response status and size.
+type responseWriter struct {
+	http.ResponseWriter
 	status int
-	body   bytes.Buffer
-	wrote  bool
+	bytes  int64
 }
 
-func newJSONGuard() *jsonGuard           { return &jsonGuard{header: make(http.Header), status: http.StatusOK} }
-func (g *jsonGuard) Header() http.Header { return g.header }
-func (g *jsonGuard) WriteHeader(status int) {
-	if g.wrote {
+func (w *responseWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *responseWriter) WriteHeader(status int) {
+	if w.status != 0 {
 		return
 	}
-	g.wrote = true
-	g.status = status
-}
-func (g *jsonGuard) Write(body []byte) (int, error) {
-	if !g.wrote {
-		g.WriteHeader(http.StatusOK)
+	if status >= 100 && status < 200 {
+		w.ResponseWriter.WriteHeader(status)
+		return
 	}
-	return g.body.Write(body)
+	w.status = status
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *responseWriter) Write(body []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(body)
+	w.bytes += int64(n)
+	return n, err
+}
+func (w *responseWriter) Flush() { _ = w.FlushError() }
+func (w *responseWriter) FlushError() error {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
-func (g *jsonGuard) flush(w http.ResponseWriter, r *http.Request) {
-	contentType := strings.ToLower(g.header.Get("Content-Type"))
-	isJSON := strings.Contains(contentType, "application/json")
-	isAttachment := g.status >= http.StatusOK && g.status < http.StatusMultipleChoices &&
-		strings.HasPrefix(strings.ToLower(g.header.Get("Content-Disposition")), "attachment;")
-	if !isJSON && !isAttachment {
+// jsonErrorWriter normalizes net/http's plain-text 404/405 errors without buffering successful JSON or attachments.
+type jsonErrorWriter struct {
+	http.ResponseWriter
+	request  *http.Request
+	wrote    bool
+	replaced bool
+}
+
+func (w *jsonErrorWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *jsonErrorWriter) WriteHeader(status int) {
+	if w.wrote {
+		return
+	}
+	if status >= 100 && status < 200 {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	w.wrote = true
+	if status >= 400 && !strings.Contains(strings.ToLower(w.Header().Get("Content-Type")), "application/json") {
+		w.replaced = true
+		clearBodyHeaders(w.Header())
 		code, message := "HTTP_ERROR", "请求失败"
-		switch g.status {
+		switch status {
 		case http.StatusNotFound:
 			code, message = "ROUTE_NOT_FOUND", "接口不存在"
 		case http.StatusMethodNotAllowed:
 			code, message = "METHOD_NOT_ALLOWED", "请求方法不允许"
 		}
-		Error(w, r, g.status, code, message, nil)
+		Error(w.ResponseWriter, w.request, status, code, message, nil)
 		return
 	}
-	for name, values := range g.header {
-		for _, value := range values {
-			w.Header().Add(name, value)
-		}
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *jsonErrorWriter) Write(body []byte) (int, error) {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
 	}
-	w.WriteHeader(g.status)
-	_, _ = w.Write(g.body.Bytes())
+	if w.replaced {
+		return len(body), nil
+	}
+	return w.ResponseWriter.Write(body)
+}
+func (w *jsonErrorWriter) Flush() { _ = w.FlushError() }
+func (w *jsonErrorWriter) FlushError() error {
+	if !w.wrote {
+		w.WriteHeader(http.StatusOK)
+	}
+	return http.NewResponseController(w.ResponseWriter).Flush()
 }
 
-var _ http.ResponseWriter = (*jsonGuard)(nil)
+// Headers describing an abandoned representation must not describe the replacement JSON error.
+func clearBodyHeaders(header http.Header) {
+	header.Del("Content-Length")
+	header.Del("Content-Disposition")
+	header.Del("Content-Encoding")
+}

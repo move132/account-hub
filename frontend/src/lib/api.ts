@@ -10,12 +10,14 @@ export class ApiError extends Error {
   code: number
   errorCode?: string
   requestId?: string
+  details?: unknown
 
   constructor(response: Envelope) {
     super(response.msg)
     this.code = response.code
     this.errorCode = typeof response.data.error_code === "string" ? response.data.error_code : undefined
     this.requestId = typeof response.data.request_id === "string" ? response.data.request_id : undefined
+    this.details = response.data.details
   }
 }
 

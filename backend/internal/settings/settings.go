@@ -8,7 +8,12 @@ import (
 	"fmt"
 	"net/url"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"time"
+
+	"account-hub/internal/platform/apperror"
+	platformsqlite "account-hub/internal/platform/sqlite"
 )
 
 type Kind string
@@ -47,14 +52,11 @@ type Item struct {
 	Value any `json:"value"`
 }
 
-type CleanupResult struct {
-	AuditLogs        int `json:"audit_logs"`
-	TokenAttempts    int `json:"token_attempts"`
-	DreaminaAttempts int `json:"dreamina_attempts"`
-	Jobs             int `json:"jobs"`
+type Repository struct {
+	db       *sql.DB
+	writes   sync.Mutex
+	snapshot atomic.Pointer[Snapshot]
 }
-
-type Repository struct{ db *sql.DB }
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 
@@ -82,11 +84,16 @@ func (r *Repository) EnsureDefaults(ctx context.Context) error {
 			return fmt.Errorf("seed setting %s: %w", definition.Key, err)
 		}
 	}
-	return nil
+	_, err := r.Snapshot(ctx)
+	return err
 }
 
 func (r *Repository) List(ctx context.Context) ([]Item, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT key, value, value_type FROM settings ORDER BY key")
+	return list(ctx, r.db)
+}
+
+func list(ctx context.Context, db platformsqlite.DBTX) ([]Item, error) {
+	rows, err := db.QueryContext(ctx, "SELECT key, value, value_type FROM settings ORDER BY key")
 	if err != nil {
 		return nil, err
 	}
@@ -130,149 +137,81 @@ func (r *Repository) Values(ctx context.Context) (map[string]any, error) {
 	return result, nil
 }
 
+// Update persists settings only. Application-level effects belong to Service.
 func (r *Repository) Update(ctx context.Context, updates map[string]any) ([]Item, error) {
-	if len(updates) == 0 {
-		return nil, errors.New("至少提供一个设置")
-	}
-	current, err := r.Values(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for key, value := range updates {
-		definition, ok := definitionFor(key)
-		if !ok {
-			return nil, fmt.Errorf("未知设置键: %s", key)
-		}
-		normalized, err := normalize(definition, value)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", key, err)
-		}
-		current[key] = normalized
-	}
-	if enabled, _ := current["proxy_enabled"].(bool); enabled {
-		proxyURL, _ := current["proxy_url"].(string)
-		if err := validateProxyURL(proxyURL); err != nil {
-			return nil, err
-		}
-	}
+	return r.update(ctx, updates, nil)
+}
 
+func (r *Repository) update(ctx context.Context, updates map[string]any, effects []ChangeEffect) ([]Item, error) {
+	if len(updates) == 0 {
+		return nil, apperror.New(apperror.Validation, "至少提供一个设置")
+	}
+	// Serialize commit and snapshot publication, so a later commit cannot publish an older snapshot.
+	r.writes.Lock()
+	defer r.writes.Unlock()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
 	defer tx.Rollback()
+	items, err := list(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	current := itemValues(items)
+	change := Change{Before: snapshotFromValues(current), Keys: make(map[string]bool, len(updates))}
+	for key, value := range updates {
+		definition, ok := definitionFor(key)
+		if !ok {
+			return nil, apperror.New(apperror.Validation, fmt.Sprintf("未知设置键: %s", key))
+		}
+		normalized, err := normalize(definition, value)
+		if err != nil {
+			return nil, apperror.Wrap(apperror.Validation, fmt.Sprintf("%s: %s", key, err), err)
+		}
+		current[key] = normalized
+		change.Keys[key] = true
+	}
+	if enabled, _ := current["proxy_enabled"].(bool); enabled {
+		proxyURL, _ := current["proxy_url"].(string)
+		if err := validateProxyURL(proxyURL); err != nil {
+			return nil, apperror.Wrap(apperror.Validation, err.Error(), err)
+		}
+	}
 	now := time.Now().UTC().UnixMilli()
 	for key := range updates {
 		definition, _ := definitionFor(key)
-		normalized := current[key]
-		encoded, _ := encode(definition.Kind, normalized)
-		if _, err := tx.ExecContext(ctx, "UPDATE settings SET value = ?, updated_at = ? WHERE key = ?", encoded, now, key); err != nil {
+		encoded, err := encode(definition.Kind, current[key])
+		if err != nil {
+			return nil, err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO settings(key, value, value_type, updated_at) VALUES(?, ?, ?, ?)
+   ON CONFLICT(key) DO UPDATE SET value = excluded.value, value_type = excluded.value_type, updated_at = excluded.updated_at`, key, encoded, definition.Kind, now); err != nil {
 			return nil, err
 		}
 	}
-	if _, changedInterval := updates["token_refresh_interval_hours"]; changedInterval || hasKey(updates, "token_auto_refresh_enabled") {
-		if enabled, _ := current["token_auto_refresh_enabled"].(bool); enabled {
-			hours, _ := current["token_refresh_interval_hours"].(int)
-			intervalMillis := int64(time.Duration(hours) * time.Hour / time.Millisecond)
-			if _, err := tx.ExecContext(ctx, `UPDATE tokens SET next_refresh_at = CASE
-                    WHEN last_refreshed_at IS NULL THEN 0 ELSE last_refreshed_at + ? END
-                    WHERE status = 'enabled'`, intervalMillis); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if _, changedInterval := updates["dreamina_refresh_interval_days"]; changedInterval || hasKey(updates, "dreamina_auto_refresh_enabled") {
-		if enabled, _ := current["dreamina_auto_refresh_enabled"].(bool); enabled {
-			days, _ := current["dreamina_refresh_interval_days"].(int)
-			intervalMillis := int64(time.Duration(days) * 24 * time.Hour / time.Millisecond)
-			if _, err := tx.ExecContext(ctx, `UPDATE dreamina_accounts SET next_refresh_at = CASE
-                    WHEN last_refreshed_at IS NULL THEN 0 ELSE last_refreshed_at + ? END
-                    WHERE status = 'enabled'`, intervalMillis); err != nil {
-				return nil, err
-			}
+	change.After = snapshotFromValues(current)
+	for _, effect := range effects {
+		if err := effect(ctx, tx, change); err != nil {
+			return nil, err
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
-	return r.List(ctx)
+	r.snapshot.Store(&change.After)
+	for i := range items {
+		items[i].Value = current[items[i].Key]
+	}
+	return items, nil
 }
 
-func (r *Repository) CleanupHistory(ctx context.Context, before int64) (CleanupResult, error) {
-	if before <= 0 {
-		return CleanupResult{}, errors.New("before 必须是有效时间戳")
+func itemValues(items []Item) map[string]any {
+	values := make(map[string]any, len(items))
+	for _, item := range items {
+		values[item.Key] = item.Value
 	}
-	if before > time.Now().UTC().UnixMilli() {
-		return CleanupResult{}, errors.New("清理时间不能晚于当前时间")
-	}
-	tx, err := r.db.BeginTx(ctx, nil)
-	if err != nil {
-		return CleanupResult{}, err
-	}
-	defer tx.Rollback()
-	result := CleanupResult{}
-	tokenAttempts, err := deleteWhere(ctx, tx, "DELETE FROM token_refresh_attempts WHERE started_at < ?", before)
-	if err != nil {
-		return CleanupResult{}, err
-	}
-	result.TokenAttempts = tokenAttempts
-	dreaminaAttempts, err := deleteWhere(ctx, tx, "DELETE FROM dreamina_refresh_attempts WHERE started_at < ?", before)
-	if err != nil {
-		return CleanupResult{}, err
-	}
-	result.DreaminaAttempts = dreaminaAttempts
-	jobs, err := finishedJobIDsBefore(ctx, tx, before)
-	if err != nil {
-		return CleanupResult{}, err
-	}
-	for _, id := range jobs {
-		if _, err := tx.ExecContext(ctx, "DELETE FROM idempotency_keys WHERE response_body = ?", id); err != nil {
-			return CleanupResult{}, err
-		}
-	}
-	if len(jobs) > 0 {
-		deletedJobs := 0
-		for _, id := range jobs {
-			changed, err := deleteWhere(ctx, tx, "DELETE FROM jobs WHERE id = ?", id)
-			if err != nil {
-				return CleanupResult{}, err
-			}
-			deletedJobs += changed
-		}
-		result.Jobs = deletedJobs
-	}
-	auditLogs, err := deleteWhere(ctx, tx, "DELETE FROM audit_logs WHERE created_at < ?", before)
-	if err != nil {
-		return CleanupResult{}, err
-	}
-	result.AuditLogs = auditLogs
-	return result, tx.Commit()
-}
-
-func deleteWhere(ctx context.Context, tx *sql.Tx, query string, args ...any) (int, error) {
-	execResult, err := tx.ExecContext(ctx, query, args...)
-	if err != nil {
-		return 0, err
-	}
-	deleted, err := execResult.RowsAffected()
-	return int(deleted), err
-}
-
-func finishedJobIDsBefore(ctx context.Context, tx *sql.Tx, before int64) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, "SELECT id FROM jobs WHERE created_at < ? AND state NOT IN ('queued', 'running') AND running = 0", before)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := make([]string, 0)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return values
 }
 
 func normalize(definition Definition, value any) (any, error) {
@@ -315,11 +254,6 @@ func normalize(definition Definition, value any) (any, error) {
 	default:
 		return nil, errors.New("不支持的设置类型")
 	}
-}
-
-func hasKey(values map[string]any, key string) bool {
-	_, found := values[key]
-	return found
 }
 
 func validateProxyURL(raw string) error {

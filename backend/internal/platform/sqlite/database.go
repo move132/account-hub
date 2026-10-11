@@ -99,5 +99,16 @@ func migrate(ctx context.Context, db *sql.DB) error {
 			return fmt.Errorf("commit migration %s: %w", entry.Name(), err)
 		}
 	}
+	// Remove encrypted copies from the earlier, unreleased API Key schema.
+	// Existing hashes and audit identities continue to work without a key file.
+	var legacySecrets bool
+	if err := db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM pragma_table_info('api_keys') WHERE name='secret_ciphertext')`).Scan(&legacySecrets); err != nil {
+		return fmt.Errorf("check legacy API Key storage: %w", err)
+	}
+	if legacySecrets {
+		if _, err := db.ExecContext(ctx, `ALTER TABLE api_keys DROP COLUMN secret_ciphertext`); err != nil {
+			return fmt.Errorf("remove legacy API Key secrets: %w", err)
+		}
+	}
 	return nil
 }

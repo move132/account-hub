@@ -32,7 +32,7 @@ Textarea.displayName = "Textarea";
 export const FileInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} type="file" className={cn("block w-full rounded-md border border-app-border bg-app-muted p-1 text-xs text-app-subtle file:mr-2 file:rounded file:border-0 file:bg-app-hover file:px-2 file:py-0.5 file:text-app-foreground", className)} {...props} />);
 FileInput.displayName = "FileInput";
 export function Field({ label, children, hint }: {
-  label: string;
+  label: ReactNode;
   children: ReactNode;
   hint?: string;
 }) {
@@ -42,12 +42,13 @@ export function Field({ label, children, hint }: {
     {children}{hint && <span className="text-xs font-normal text-app-subtle">
       {hint}</span>}</Label.Root>;
 }
-export function Switch({ checked, onCheckedChange, disabled }: {
+export function Switch({ checked, onCheckedChange, disabled, "aria-label": ariaLabel }: {
   checked: boolean;
   onCheckedChange: (checked: boolean) => void;
   disabled?: boolean;
+  "aria-label"?: string;
 }) {
-  return <RadixSwitch.Root checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} className="relative h-5 w-9 rounded-full border border-app-border bg-app-muted outline-none transition-colors data-[state=checked]:border-app-primary data-[state=checked]:bg-app-primary disabled:opacity-50">
+  return <RadixSwitch.Root aria-label={ariaLabel} checked={checked} onCheckedChange={onCheckedChange} disabled={disabled} className="relative h-5 w-9 shrink-0 rounded-full border border-app-border bg-app-muted outline-none transition-colors data-[state=checked]:border-app-primary data-[state=checked]:bg-app-primary disabled:opacity-50">
     <RadixSwitch.Thumb className="block size-4 translate-x-0.5 rounded-full bg-white shadow transition-transform data-[state=checked]:translate-x-[1rem]" />
   </RadixSwitch.Root>;
 }
@@ -128,7 +129,7 @@ export function Dialog({ open, onOpenChange, title, description, children, conte
     </RadixDialog.Portal>
   </RadixDialog.Root>;
 }
-export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel = "确认", onConfirm, danger }: {
+export function ConfirmDialog({ open, onOpenChange, title, description, confirmLabel = "确认", onConfirm, danger, pending = false }: {
   open: boolean;
   onOpenChange: (value: boolean) => void;
   title: string;
@@ -136,6 +137,7 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
   confirmLabel?: string;
   onConfirm: () => void;
   danger?: boolean;
+  pending?: boolean;
 }) {
   return <AlertDialog.Root open={open} onOpenChange={onOpenChange}>
     <AlertDialog.Portal>
@@ -147,10 +149,10 @@ export function ConfirmDialog({ open, onOpenChange, title, description, confirmL
           {description}</AlertDialog.Description>
         <div className="mt-5 flex justify-end gap-2">
           <AlertDialog.Cancel asChild>
-            <Button>取消</Button>
+            <Button disabled={pending}>取消</Button>
           </AlertDialog.Cancel>
           <AlertDialog.Action asChild>
-            <Button variant={danger ? "danger" : "primary"} onClick={onConfirm}>
+            <Button variant={danger ? "danger" : "primary"} disabled={pending} onClick={onConfirm}>
               {confirmLabel}</Button>
           </AlertDialog.Action>
         </div>

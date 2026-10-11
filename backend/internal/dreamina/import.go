@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"strings"
 
 	"account-hub/internal/platform/security"
@@ -19,18 +18,6 @@ type importRow struct {
 	Errors          []string    `json:"errors"`
 	Duplicate       bool        `json:"duplicate"`
 	DuplicateReason string      `json:"duplicate_reason"`
-}
-
-func readImport(r *http.Request) ([]importRow, error) {
-	file, _, err := r.FormFile("file")
-	if err == nil {
-		defer file.Close()
-		return parseImport(file)
-	}
-	if !errors.Is(err, http.ErrMissingFile) {
-		return nil, errors.New("无法读取上传文件")
-	}
-	return parseImport(strings.NewReader(r.FormValue("content")))
 }
 
 func parseImport(reader io.Reader) ([]importRow, error) {

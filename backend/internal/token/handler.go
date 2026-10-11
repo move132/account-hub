@@ -1,8 +1,10 @@
 package token
 
 import (
+	"account-hub/internal/platform/apperror"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -18,11 +20,11 @@ import (
 type Handler struct {
 	service *Service
 	audit   *audit.Repository
-	jobs    *job.Manager
+	imports *ImportUseCase
 }
 
 func NewHandler(service *Service, auditRepository *audit.Repository, jobs *job.Manager) *Handler {
-	return &Handler{service: service, audit: auditRepository, jobs: jobs}
+	return &Handler{service: service, audit: auditRepository, imports: NewImportUseCase(service, jobs)}
 }
 
 func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
@@ -51,12 +53,12 @@ func (h *Handler) Create(w http.ResponseWriter, r *http.Request) {
 	if !httpserver.DecodeJSON(w, r, &input) {
 		return
 	}
-	item, err := h.service.Create(r.Context(), input)
+	item, err := h.create(r.Context(), input)
 	if err != nil {
 		if IsUniqueError(err) {
 			httpserver.Error(w, r, http.StatusConflict, "TOKEN_DUPLICATE", "Token 或 Session Token 已存在", nil)
 		} else {
-			httpserver.Error(w, r, http.StatusBadRequest, "TOKEN_CREATE_FAILED", err.Error(), nil)
+			handleError(w, r, err, "创建 Token 失败")
 		}
 		return
 	}
@@ -147,57 +149,53 @@ func (h *Handler) Import(w http.ResponseWriter, r *http.Request) {
 	if r.MultipartForm != nil {
 		defer r.MultipartForm.RemoveAll()
 	}
-	rows, err := readImport(r)
+	reader, closeReader, err := importReader(r)
 	if err != nil {
 		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_INVALID", err.Error(), nil)
 		return
 	}
-	if err := h.service.markImportDuplicates(r.Context(), rows); err != nil {
-		httpserver.Error(w, r, http.StatusInternalServerError, "IMPORT_CHECK_FAILED", "检查重复 Token 失败，请重试", nil)
-		return
-	}
-	valid, invalid, duplicates := 0, 0, 0
-	for _, row := range rows {
-		if len(row.Errors) > 0 {
-			invalid++
-		} else if row.Duplicate {
-			duplicates++
+	defer closeReader()
+	plan, err := h.imports.Preview(r.Context(), reader)
+	if err != nil {
+		if apperror.KindOf(err) == apperror.Validation {
+			httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_INVALID", err.Error(), nil)
 		} else {
-			valid++
+			httpserver.ReportError(w, r, err, "IMPORT_CHECK_FAILED", "检查重复内容失败，请重试")
 		}
+		return
 	}
 	if r.URL.Query().Get("dry_run") == "true" {
-		httpserver.Write(w, http.StatusOK, map[string]any{
-			"rows": importPreview(rows), "total": len(rows), "valid": valid, "invalid": invalid,
-			"duplicates": duplicates,
-		}, "预览完成")
+		httpserver.Write(w, http.StatusOK, plan.Report, "预览完成")
 		return
 	}
-	if invalid > 0 {
-		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_HAS_ERRORS", "导入内容存在错误，请先修正", map[string]any{"rows": importPreview(rows), "invalid": invalid})
+	if plan.Report.Invalid > 0 {
+		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_HAS_ERRORS", "导入内容存在错误，请先修正", map[string]any{"rows": plan.Report.Rows, "invalid": plan.Report.Invalid})
 		return
-	}
-	if valid == 0 {
-		httpserver.Write(w, http.StatusOK, map[string]any{"job": nil, "accepted": 0, "skipped": duplicates}, "所有 Token 均已存在，已跳过")
-		return
-	}
-	targets := make([]job.Target, 0, valid)
-	for _, row := range rows {
-		if row.Duplicate {
-			continue
-		}
-		targets = append(targets, job.Target{Label: row.Input.Name, Payload: row.Input})
 	}
 	session, _ := auth.SessionFromContext(r.Context())
-	createdJob, _, err := h.jobs.Create(r.Context(), "token", "import", session.AdminID, r.URL.Path, "", job.RequestHash(rows), targets)
+	result, err := h.imports.Submit(r.Context(), plan, session.AdminID, r.URL.Path)
 	if err != nil {
-		httpserver.Error(w, r, http.StatusBadRequest, "IMPORT_JOB_FAILED", err.Error(), nil)
+		httpserver.ReportError(w, r, err, "IMPORT_JOB_FAILED", "创建导入任务失败")
 		return
 	}
-	h.log(r, "token_import", createdJob.ID, fmt.Sprintf("创建 %d 条 Token 导入任务，跳过 %d 条重复 Token", valid, duplicates))
-	httpserver.Write(w, http.StatusAccepted, map[string]any{
-		"job": createdJob, "accepted": valid, "skipped": duplicates,
-	}, "导入任务已创建")
+	if result.Job == nil {
+		httpserver.Write(w, http.StatusOK, result, "所有 Token均已存在，已跳过")
+		return
+	}
+	h.log(r, "token_import", result.Job.ID, fmt.Sprintf("创建 %d 条导入任务，跳过 %d 条重复记录", result.Accepted, result.Skipped))
+	httpserver.Write(w, http.StatusAccepted, result, "导入任务已创建")
+}
+
+// importReader belongs to the HTTP adapter; the import use case only sees io.Reader.
+func importReader(r *http.Request) (io.Reader, func(), error) {
+	file, _, err := r.FormFile("file")
+	if err == nil {
+		return file, func() { _ = file.Close() }, nil
+	}
+	if !errors.Is(err, http.ErrMissingFile) {
+		return nil, func() {}, errors.New("无法读取上传文件")
+	}
+	return strings.NewReader(r.FormValue("content")), func() {}, nil
 }
 
 func (h *Handler) Export(w http.ResponseWriter, r *http.Request) {
@@ -266,12 +264,13 @@ func handleError(w http.ResponseWriter, r *http.Request, err error, message stri
 	case IsUniqueError(err):
 		httpserver.Error(w, r, http.StatusConflict, "TOKEN_DUPLICATE", "Token 或 Session Token 已存在", nil)
 	default:
-		httpserver.Error(w, r, http.StatusBadRequest, ErrorCode(err), message+": "+err.Error(), nil)
+		httpserver.ReportError(w, r, err, ErrorCode(err), message)
 	}
 }
 
 func handleUpstreamError(w http.ResponseWriter, r *http.Request, err error, message string) {
-	if IsNotFound(err) {
+	var providerError *upstream.Error
+	if !errors.As(err, &providerError) {
 		handleError(w, r, err, message)
 		return
 	}
@@ -295,6 +294,8 @@ func handleUpstreamError(w http.ResponseWriter, r *http.Request, err error, mess
 	var refreshErr *refreshError
 	if errors.As(err, &refreshErr) {
 		details["stage"] = refreshErr.stage
+		details["remote_completed"] = refreshErr.stage == refreshStageProfile
+		details["credentials_persisted"] = false
 	}
 	httpserver.Error(w, r, status, code, message+": "+err.Error(), details)
 }
@@ -308,6 +309,11 @@ func intQuery(r *http.Request, name string, fallback int) int {
 }
 
 func (h *Handler) log(r *http.Request, action, targetID, summary string) {
+	if h.audit == nil {
+		return
+	}
 	session, _ := auth.SessionFromContext(r.Context())
-	_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: action, TargetKind: "token", TargetID: targetID, Summary: summary, RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
+	if err := h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: action, TargetKind: "token", TargetID: targetID, Summary: summary, RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr}); err != nil {
+		httpserver.Logger(r.Context()).Error("record account audit", "action", action, "target_id", targetID, "error", err)
+	}
 }

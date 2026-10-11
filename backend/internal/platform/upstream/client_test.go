@@ -8,14 +8,12 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	platformsqlite "account-hub/internal/platform/sqlite"
-	"account-hub/internal/settings"
+	"account-hub/internal/platform/netconfig"
 )
 
 func TestClientRetriesTransientFailure(t *testing.T) {
@@ -159,17 +157,31 @@ func TestClientClassifiesAccessRejections(t *testing.T) {
 	}
 }
 
+type testProxySettings struct{ value netconfig.Proxy }
+
+func (p *testProxySettings) ProxyConfig(context.Context) (netconfig.Proxy, error) {
+	return p.value, nil
+}
+
 func testClient(t *testing.T, timeout time.Duration, retries int) *Client {
 	t.Helper()
-	ctx := context.Background()
-	db, err := platformsqlite.Open(ctx, filepath.Join(t.TempDir(), "test.db"))
-	if err != nil {
-		t.Fatal(err)
+	client := NewClient(&testProxySettings{}, timeout, retries)
+	t.Cleanup(client.CloseIdleConnections)
+	return client
+}
+
+func TestDoOnceDoesNotRetryMutation(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer server.Close()
+	client := testClient(t, time.Second, 2)
+	_, err := client.DoOnce(context.Background(), func(_ *http.Client) (*http.Request, error) {
+		return http.NewRequest(http.MethodPost, server.URL, strings.NewReader("mutation"))
+	})
+	if Code(err) != Unavailable || calls.Load() != 1 {
+		t.Fatalf("mutation replayed: calls=%d err=%v", calls.Load(), err)
 	}
-	t.Cleanup(func() { db.Close() })
-	repository := settings.NewRepository(db)
-	if err := repository.EnsureDefaults(ctx); err != nil {
-		t.Fatal(err)
-	}
-	return NewClient(repository, timeout, retries)
 }

@@ -3,8 +3,10 @@ package auth
 import (
 	"context"
 	"database/sql"
-	"errors"
+	"log/slog"
 	"time"
+
+	"account-hub/internal/audit"
 )
 
 type Admin struct {
@@ -25,9 +27,25 @@ type Session struct {
 	LastSeenAt int64
 }
 
-type Repository struct{ db *sql.DB }
+type Repository struct {
+	db     *sql.DB
+	logger *slog.Logger
+	audit  *audit.Repository
+}
 
-func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
+func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, logger: slog.Default()} }
+
+func (r *Repository) WithLogger(logger *slog.Logger) *Repository {
+	if logger != nil {
+		r.logger = logger
+	}
+	return r
+}
+
+func (r *Repository) WithAudit(repository *audit.Repository) *Repository {
+	r.audit = repository
+	return r
+}
 
 func (r *Repository) AdminByUsername(ctx context.Context, username string) (Admin, error) {
 	var admin Admin
@@ -66,6 +84,15 @@ func (r *Repository) UpdatePassword(ctx context.Context, adminID, passwordHash, 
 	if _, err := tx.ExecContext(ctx, query, args...); err != nil {
 		return err
 	}
+	if r.audit != nil {
+		entry, ok := audit.EntryFromContext(ctx)
+		if !ok {
+			entry = audit.Entry{AdminID: adminID, Action: "password_change", TargetKind: "auth", Summary: "修改管理员密码"}
+		}
+		if err := r.audit.LogTx(ctx, tx, entry); err != nil {
+			return err
+		}
+	}
 	return tx.Commit()
 }
 
@@ -85,24 +112,25 @@ func (r *Repository) Session(ctx context.Context, idHash string) (Session, error
 	if err != nil {
 		return Session{}, err
 	}
-	if session.ExpiresAt <= time.Now().UTC().UnixMilli() {
-		_, _ = r.db.ExecContext(ctx, "DELETE FROM admin_sessions WHERE id_hash = ?", idHash)
+	now := time.Now().UTC().UnixMilli()
+	if session.ExpiresAt <= now {
 		return Session{}, sql.ErrNoRows
 	}
-	_, _ = r.db.ExecContext(ctx, "UPDATE admin_sessions SET last_seen_at = ? WHERE id_hash = ?", time.Now().UTC().UnixMilli(), idHash)
+	// Last-seen is diagnostic metadata, not sliding expiration. Avoid writing on every authenticated read.
+	const touchInterval = int64(time.Minute / time.Millisecond)
+	if now-session.LastSeenAt >= touchInterval {
+		if _, err := r.db.ExecContext(ctx, "UPDATE admin_sessions SET last_seen_at = ? WHERE id_hash = ? AND last_seen_at <= ?", now, idHash, now-touchInterval); err != nil {
+			r.logger.Warn("session last-seen update failed", "error", err)
+		}
+	}
+
 	return session, nil
 }
 
 func (r *Repository) DeleteSession(ctx context.Context, idHash string) error {
-	result, err := r.db.ExecContext(ctx, "DELETE FROM admin_sessions WHERE id_hash = ?", idHash)
-	if err != nil {
-		return err
-	}
-	changed, _ := result.RowsAffected()
-	if changed == 0 {
-		return errors.New("session not found")
-	}
-	return nil
+	// Deleting an already revoked session is idempotent; persistence failures are not.
+	_, err := r.db.ExecContext(ctx, "DELETE FROM admin_sessions WHERE id_hash = ?", idHash)
+	return err
 }
 
 func (r *Repository) DeleteExpiredSessions(ctx context.Context) error {

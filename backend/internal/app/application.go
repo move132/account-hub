@@ -3,14 +3,13 @@ package app
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
-	"net"
 	"net/http"
 	"sync"
 	"time"
 
+	"account-hub/internal/apikey"
 	"account-hub/internal/audit"
 	"account-hub/internal/auth"
 	"account-hub/internal/dreamina"
@@ -36,6 +35,15 @@ type Application struct {
 	scheduler            *scheduler.Scheduler
 	workers              sync.WaitGroup
 	upstreams            []*upstream.Client
+	maintenance          func(context.Context) error
+	lifecycleMu          sync.Mutex
+	started              bool
+	stopping             bool
+	backgroundErr        error
+	runErrors            chan error
+	shutdownOnce         sync.Once
+	shutdownDone         chan struct{}
+	shutdownErr          error
 }
 
 func New(ctx context.Context, config Config, logger *slog.Logger) (*Application, error) {
@@ -48,8 +56,9 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 		db.Close()
 		return nil, err
 	}
-	auditRepository := audit.NewRepository(db)
-	authRepository := auth.NewRepository(db)
+	auditRepository := audit.NewRepository(db).WithLogger(logger.With("component", "audit"))
+	apiKeyService := apikey.NewService(apikey.NewRepository(db).WithAudit(auditRepository))
+	authRepository := auth.NewRepository(db).WithLogger(logger.With("component", "auth")).WithAudit(auditRepository)
 	initialAdminPassword, err := auth.Bootstrap(ctx, authRepository, config.AdminUsername)
 	if err != nil {
 		db.Close()
@@ -60,13 +69,15 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	}
 	authService := auth.NewService(authRepository, config.AdminSessionTTL)
 	authHandler := auth.NewHandler(authService, auditRepository)
+	apiKeyMiddleware := apikey.NewMiddleware(apiKeyService)
 
 	upstreamClient := upstream.NewClient(settingRepository, config.UpstreamRequestTimeout, config.UpstreamRetryCount).WithLogger(logger.With("component", "upstream"))
 	tokenUpstreamClient := upstream.NewBrowserClient(settingRepository, config.UpstreamRequestTimeout, config.UpstreamRetryCount).WithLogger(logger.With("component", "token_upstream"))
 	tokenRepository := token.NewRepository(db)
 	tokenClient := token.NewClient(tokenUpstreamClient)
 	tokenService := token.NewService(tokenRepository, tokenClient, settingRepository).WithLogger(logger.With("component", "token_service"))
-	tokenContentHandler := token.NewContentHandler(tokenRepository, tokenClient, auditRepository)
+	tokenContentService := token.NewContentService(tokenRepository, tokenClient)
+	tokenContentHandler := token.NewContentHandlerWithService(tokenContentService, auditRepository)
 	dreaminaRepository := dreamina.NewRepository(db)
 	dreaminaService := dreamina.NewService(dreaminaRepository, dreamina.NewClient(upstreamClient, config.DisplayTimezone), settingRepository).WithLogger(logger.With("component", "dreamina_service"))
 
@@ -76,60 +87,87 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	dreaminaHandler := dreamina.NewHandler(dreaminaService, auditRepository, jobManager)
 	jobHandler := job.NewHandler(jobManager, auditRepository).
 		WithTargetResolver("token", func(ctx context.Context, ids []string) ([]job.Target, error) {
-			targets := make([]job.Target, 0, len(ids))
-			for _, id := range ids {
-				view, err := tokenService.Get(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-				label := view.Email
-				if label == "" {
-					label = view.Name
-				}
-				if label == "" {
-					label = id
-				}
-				targets = append(targets, job.Target{ID: id, Label: label})
+			labels, err := tokenService.TargetLabels(ctx, ids)
+			if err != nil {
+				return nil, err
 			}
-			return targets, nil
+			return targetsFromLabels(ids, labels)
 		}).
 		WithTargetResolver("dreamina", func(ctx context.Context, ids []string) ([]job.Target, error) {
-			targets := make([]job.Target, 0, len(ids))
-			for _, id := range ids {
-				view, err := dreaminaService.Get(ctx, id)
-				if err != nil {
-					return nil, err
-				}
-				label := view.Email
-				if label == "" {
-					label = id
-				}
-				targets = append(targets, job.Target{ID: id, Label: label})
+			labels, err := dreaminaService.TargetLabels(ctx, ids)
+			if err != nil {
+				return nil, err
 			}
-			return targets, nil
+			return targetsFromLabels(ids, labels)
 		})
-	jobScheduler := scheduler.New(jobManager, settingRepository, tokenService, dreaminaService, logger)
-	settingHandler := settings.NewHandler(settingRepository, auditRepository)
+	jobScheduler := scheduler.NewWithSchedules(jobManager, nil, logger,
+		scheduler.Schedule{TargetKind: "token", Source: tokenService, Policy: func(ctx context.Context) (bool, int, error) {
+			snapshot, err := settingRepository.Snapshot(ctx)
+			return snapshot.Token.Enabled, snapshot.Token.BatchSize, err
+		}},
+		scheduler.Schedule{TargetKind: "dreamina", Source: dreaminaService, Policy: func(ctx context.Context) (bool, int, error) {
+			snapshot, err := settingRepository.Snapshot(ctx)
+			return snapshot.Dreamina.Enabled, snapshot.Dreamina.BatchSize, err
+		}},
+	)
+	settingService := settings.NewService(settingRepository, func(ctx context.Context, db platformsqlite.DBTX, change settings.Change) error {
+		if change.After.Token.Enabled && (change.Keys["token_refresh_interval_hours"] || change.Keys["token_auto_refresh_enabled"]) {
+			if err := tokenRepository.Reschedule(ctx, db, change.After.Token.Interval.Milliseconds()); err != nil {
+				return err
+			}
+		}
+		if change.After.Dreamina.Enabled && (change.Keys["dreamina_refresh_interval_days"] || change.Keys["dreamina_auto_refresh_enabled"]) {
+			if err := dreaminaRepository.Reschedule(ctx, db, change.After.Dreamina.Interval.Milliseconds()); err != nil {
+				return err
+			}
+		}
+		return nil
+	}).WithAudit(auditRepository)
+	settingHandler := settings.NewHandler(settingService, settings.NewMaintenance(db).WithAudit(auditRepository)).WithAPIKeys(apiKeyService)
 	auditHandler := audit.NewHandler(auditRepository)
+	idempotencyStore := idempotency.NewStore(db)
 	idempotencyMiddleware := idempotency.New(db)
 	mutation := func(handler http.Handler) http.Handler {
 		return authHandler.RequireMutation(idempotencyMiddleware.Wrap(handler))
 	}
+	tokenRead := func(handler http.Handler) http.Handler {
+		return apiKeyMiddleware.Allow(handler, authHandler.Require(handler))
+	}
+	tokenMutation := func(handler http.Handler) http.Handler {
+		return apiKeyMiddleware.Allow(handler, authHandler.RequireMutation(handler))
+	}
+	tokenCommand := func(handler http.Handler) http.Handler {
+		return tokenMutation(idempotencyMiddleware.Wrap(handler))
+	}
 
+	application := &Application{
+		config: config, initialAdminPassword: initialAdminPassword, logger: logger,
+		db: db, jobs: jobManager, scheduler: jobScheduler,
+		upstreams: []*upstream.Client{upstreamClient, tokenUpstreamClient},
+		runErrors: make(chan error, 1), shutdownDone: make(chan struct{}),
+		maintenance: func(ctx context.Context) error {
+			sessionErr := authRepository.DeleteExpiredSessions(ctx)
+			deleted, keyErr := idempotencyStore.PruneExpired(ctx)
+			if deleted > 0 {
+				logger.Info("expired idempotency records removed", "count", deleted)
+			}
+			return errors.Join(sessionErr, keyErr)
+		},
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 	mux.Handle("POST /api/v1/auth/logout", authHandler.RequireMutation(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("GET /api/v1/auth/session", authHandler.Require(http.HandlerFunc(authHandler.CurrentSession)))
 	mux.Handle("PATCH /api/v1/auth/password", authHandler.RequireMutation(http.HandlerFunc(authHandler.ChangePassword)))
 
-	mux.Handle("GET /api/v1/tokens", authHandler.Require(http.HandlerFunc(tokenHandler.List)))
-	mux.Handle("POST /api/v1/tokens", mutation(http.HandlerFunc(tokenHandler.Create)))
-	mux.Handle("GET /api/v1/tokens/{id}", authHandler.Require(http.HandlerFunc(tokenHandler.Get)))
+	mux.Handle("GET /api/v1/tokens", tokenRead(http.HandlerFunc(tokenHandler.List)))
+	mux.Handle("POST /api/v1/tokens", tokenCommand(http.HandlerFunc(tokenHandler.Create)))
+	mux.Handle("GET /api/v1/tokens/{id}", tokenRead(http.HandlerFunc(tokenHandler.Get)))
 	mux.Handle("GET /api/v1/tokens/{id}/edit", authHandler.Require(http.HandlerFunc(tokenHandler.GetForEdit)))
-	mux.Handle("PATCH /api/v1/tokens/{id}", authHandler.RequireMutation(http.HandlerFunc(tokenHandler.Update)))
-	mux.Handle("DELETE /api/v1/tokens/{id}", authHandler.RequireMutation(http.HandlerFunc(tokenHandler.Delete)))
-	mux.Handle("POST /api/v1/tokens/{id}/checks", mutation(http.HandlerFunc(tokenHandler.Check)))
-	mux.Handle("POST /api/v1/tokens/{id}/refreshes", mutation(http.HandlerFunc(tokenHandler.Refresh)))
+	mux.Handle("PATCH /api/v1/tokens/{id}", tokenMutation(http.HandlerFunc(tokenHandler.Update)))
+	mux.Handle("DELETE /api/v1/tokens/{id}", tokenMutation(http.HandlerFunc(tokenHandler.Delete)))
+	mux.Handle("POST /api/v1/tokens/{id}/checks", tokenCommand(http.HandlerFunc(tokenHandler.Check)))
+	mux.Handle("POST /api/v1/tokens/{id}/refreshes", tokenCommand(http.HandlerFunc(tokenHandler.Refresh)))
 	mux.Handle("GET /api/v1/tokens/{id}/attempts", authHandler.Require(http.HandlerFunc(tokenHandler.Attempts)))
 	mux.Handle("GET /api/v1/tokens/{id}/storage", authHandler.Require(http.HandlerFunc(tokenContentHandler.Storage)))
 	mux.Handle("GET /api/v1/tokens/{id}/library/files", authHandler.Require(http.HandlerFunc(tokenContentHandler.Files)))
@@ -171,8 +209,8 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 		httpserver.Write(w, http.StatusOK, map[string]any{"status": "live"}, "服务正常")
 	})
 	mux.HandleFunc("GET /health/ready", func(w http.ResponseWriter, r *http.Request) {
-		if err := db.PingContext(r.Context()); err != nil {
-			httpserver.Error(w, r, http.StatusServiceUnavailable, "DATABASE_UNAVAILABLE", "数据库不可用", nil)
+		if err := application.ready(r.Context()); err != nil {
+			httpserver.Error(w, r, http.StatusServiceUnavailable, "SERVICE_NOT_READY", "服务尚未就绪", nil)
 			return
 		}
 		httpserver.Write(w, http.StatusOK, map[string]any{"status": "ready"}, "服务就绪")
@@ -182,112 +220,11 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	})
 	mux.Handle("/", web.Handler())
 
-	workerContext, cancel := context.WithCancel(context.Background())
-	application := &Application{config: config, initialAdminPassword: initialAdminPassword, logger: logger, db: db, cancel: cancel, jobs: jobManager, scheduler: jobScheduler, upstreams: []*upstream.Client{upstreamClient, tokenUpstreamClient}}
 	application.server = &http.Server{
 		Addr: config.ListenAddress, Handler: httpserver.Middleware(logger, mux),
 		ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 35 * time.Second, WriteTimeout: 40 * time.Second, IdleTimeout: 60 * time.Second,
 	}
-	application.workers.Add(2)
-	go func() {
-		defer application.workers.Done()
-		jobManager.Start(workerContext, config.JobScanInterval, config.RefreshWorkerConcurrency)
-	}()
-	go func() {
-		defer application.workers.Done()
-		jobScheduler.Start(workerContext, config.JobScanInterval)
-	}()
 	return application, nil
-}
-
-func registerExecutors(manager *job.Manager, settingRepository *settings.Repository, tokens *token.Service, dreaminaService *dreamina.Service) {
-	manager.Register("token", "import", func(ctx context.Context, _ string, payload json.RawMessage) error {
-		var input token.CreateInput
-		if err := json.Unmarshal(payload, &input); err != nil {
-			return err
-		}
-		return tokens.Import(ctx, input)
-	}, nil)
-	manager.Register("token", "check", func(ctx context.Context, id string, _ json.RawMessage) error {
-		_, err := tokens.Check(ctx, id)
-		return err
-	}, nil)
-	manager.Register("token", "refresh", func(ctx context.Context, id string, _ json.RawMessage) error {
-		_, err := tokens.Refresh(ctx, id)
-		return err
-	}, func(ctx context.Context) time.Duration {
-		return time.Duration(settingInt(ctx, settingRepository, "token_refresh_account_interval_seconds", 6)) * time.Second
-	})
-	manager.Register("token", "enable", func(ctx context.Context, id string, _ json.RawMessage) error {
-		return tokens.SetStatus(ctx, id, "enabled")
-	}, nil)
-	manager.Register("token", "disable", func(ctx context.Context, id string, _ json.RawMessage) error {
-		return tokens.SetStatus(ctx, id, "disabled")
-	}, nil)
-	manager.Register("token", "delete", func(ctx context.Context, id string, _ json.RawMessage) error { return tokens.Delete(ctx, id) }, nil)
-	manager.Register("dreamina", "import", func(ctx context.Context, _ string, payload json.RawMessage) error {
-		var input dreamina.CreateInput
-		if err := json.Unmarshal(payload, &input); err != nil {
-			return err
-		}
-		return dreaminaService.Import(ctx, input)
-	}, nil)
-	manager.Register("dreamina", "check", func(ctx context.Context, id string, _ json.RawMessage) error {
-		_, _, err := dreaminaService.Check(ctx, id)
-		return err
-	}, nil)
-	manager.Register("dreamina", "refresh", func(ctx context.Context, id string, _ json.RawMessage) error {
-		_, err := dreaminaService.Refresh(ctx, id)
-		return err
-	}, func(ctx context.Context) time.Duration {
-		return time.Duration(settingInt(ctx, settingRepository, "dreamina_refresh_account_interval_minutes", 2)) * time.Minute
-	})
-	manager.Register("dreamina", "enable", func(ctx context.Context, id string, _ json.RawMessage) error {
-		return dreaminaService.SetStatus(ctx, id, "enabled")
-	}, nil)
-	manager.Register("dreamina", "disable", func(ctx context.Context, id string, _ json.RawMessage) error {
-		return dreaminaService.SetStatus(ctx, id, "disabled")
-	}, nil)
-	manager.Register("dreamina", "delete", func(ctx context.Context, id string, _ json.RawMessage) error { return dreaminaService.Delete(ctx, id) }, nil)
-}
-
-func settingInt(ctx context.Context, repository *settings.Repository, key string, fallback int) int {
-	values, err := repository.Values(ctx)
-	if err == nil {
-		if value, ok := values[key].(int); ok {
-			return value
-		}
-	}
-	return fallback
-}
-
-func (a *Application) Run(listener net.Listener) error {
-	a.logger.Info("account-hub starting", "address", a.config.ListenAddress)
-	err := a.server.Serve(listener)
-	if errors.Is(err, http.ErrServerClosed) {
-		return nil
-	}
-	return err
-}
-
-func (a *Application) Shutdown(ctx context.Context) error {
-	a.cancel()
-	serverErr := a.server.Shutdown(ctx)
-	done := make(chan struct{})
-	go func() {
-		a.workers.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-ctx.Done():
-		return errors.Join(serverErr, ctx.Err())
-	}
-	for _, client := range a.upstreams {
-		client.CloseIdleConnections()
-	}
-	dbErr := a.db.Close()
-	return errors.Join(serverErr, dbErr)
 }
 
 func (a *Application) Handler() http.Handler { return a.server.Handler }

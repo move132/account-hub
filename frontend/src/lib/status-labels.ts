@@ -68,6 +68,9 @@ const auditActionLabels: Record<string, string> = {
   job_batch_delete: "批量删除任务",
   history_cleanup: "清理历史日志",
   settings_update: "更新系统设置",
+  api_key_create: "新增 API Key",
+  api_key_copy: "复制 API Key",
+  api_key_delete: "删除 API Key",
 };
 
 const targetKindLabels: Record<string, string> = {
@@ -76,6 +79,7 @@ const targetKindLabels: Record<string, string> = {
   dreamina: "即梦账号",
   job: "任务",
   settings: "系统设置",
+  api_key: "API Key",
 };
 
 export function accountStatusLabel(value: string) {

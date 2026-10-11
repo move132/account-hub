@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"time"
+
+	"account-hub/internal/platform/apperror"
 )
 
 type Response struct {
@@ -56,4 +58,32 @@ func DecodeJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 		return false
 	}
 	return true
+}
+
+// ReportError maps application failures to HTTP without exposing storage or transport causes.
+func ReportError(w http.ResponseWriter, r *http.Request, err error, code, fallbackMessage string) {
+	status := http.StatusInternalServerError
+	switch apperror.KindOf(err) {
+	case apperror.Validation:
+		status = http.StatusBadRequest
+	case apperror.NotFound:
+		status = http.StatusNotFound
+	case apperror.Conflict:
+		status = http.StatusConflict
+	case apperror.Unauthenticated:
+		status = http.StatusUnauthorized
+	case apperror.Unavailable:
+		status = http.StatusServiceUnavailable
+	}
+	if status >= 500 {
+		Logger(r.Context()).Error("request operation failed", "request_id", RequestID(r.Context()), "error_code", code, "error", err, "cause", internalCause(err))
+	}
+	Error(w, r, status, code, apperror.PublicMessage(err, fallbackMessage), nil)
+}
+
+func internalCause(err error) error {
+	for errors.Unwrap(err) != nil {
+		err = errors.Unwrap(err)
+	}
+	return err
 }

@@ -86,7 +86,7 @@ export function ToastProvider({ children }: {
       return <Toast.Root key={notice.id} open={notice.open} type={notice.tone === "danger" || notice.tone === "warning" ? "foreground" : "background"} onOpenChange={(open) => {
         if (!open)
           dismiss(notice.id);
-      }} className={cn("toast-root pointer-events-auto relative grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 overflow-hidden rounded-lg border border-l-[3px] bg-app-surface p-3 shadow-xl", styles.root)}>
+      }} className={cn("toast-root pointer-events-auto relative grid w-fit min-w-[min(15rem,100%)] max-w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-3 overflow-hidden rounded-lg border border-l-[3px] bg-app-surface p-3 shadow-xl", styles.root)}>
         <span className={cn("grid size-8 shrink-0 place-items-center rounded-md", styles.icon)}>
           <ToneIcon tone={notice.tone} />
         </span>
@@ -100,7 +100,7 @@ export function ToastProvider({ children }: {
           <X aria-hidden="true" className="size-3.5" />
         </Toast.Close>
       </Toast.Root>;
-    })}<Toast.Viewport className="pointer-events-none fixed right-3 top-3 z-[100] m-0 flex max-h-[calc(100vh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-sm list-none flex-col gap-2 p-0 outline-none sm:right-5 sm:top-5 sm:max-h-[calc(100vh-2.5rem)]" />
+    })}<Toast.Viewport className="pointer-events-none fixed right-3 top-3 z-[100] m-0 flex max-h-[calc(100vh-1.5rem)] w-[calc(100vw-1.5rem)] max-w-xs list-none flex-col items-end gap-2 p-0 outline-none sm:right-5 sm:top-5 sm:max-h-[calc(100vh-2.5rem)]" />
   </Toast.Provider>;
 }
 function ToneIcon({ tone }: {

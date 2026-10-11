@@ -73,3 +73,33 @@ func TestSchedulerCreatesPersistentRefreshJob(t *testing.T) {
 	}
 	t.Fatal("scheduler did not create refresh job")
 }
+
+type recordingSubmitter struct{ commands []job.Submission }
+
+func (s *recordingSubmitter) Submit(_ context.Context, command job.Submission) (job.Job, bool, error) {
+	s.commands = append(s.commands, command)
+	return job.Job{}, false, nil
+}
+
+type recordingDueSource struct{ limit int }
+
+func (s *recordingDueSource) DueIDs(_ context.Context, limit int) ([]string, error) {
+	s.limit = limit
+	return []string{"one", "two"}, nil
+}
+func TestTypedSchedulePolicyDoesNotReadLegacySettings(t *testing.T) {
+	submitter := &recordingSubmitter{}
+	source := &recordingDueSource{}
+	disabled := &recordingDueSource{}
+	scheduler := NewWithSchedules(submitter, nil, slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Schedule{TargetKind: "token", Source: source, Policy: func(context.Context) (bool, int, error) { return true, 17, nil }},
+		Schedule{TargetKind: "dreamina", Source: disabled, Policy: func(context.Context) (bool, int, error) { return false, 5, nil }})
+	scheduler.scan(context.Background())
+	if source.limit != 17 || disabled.limit != 0 || len(submitter.commands) != 1 {
+		t.Fatalf("limit=%d disabled=%d commands=%+v", source.limit, disabled.limit, submitter.commands)
+	}
+	command := submitter.commands[0]
+	if command.TargetKind != "token" || command.Action != "refresh" || command.ActorID != "" || len(command.Targets) != 2 {
+		t.Fatalf("command %+v", command)
+	}
+}

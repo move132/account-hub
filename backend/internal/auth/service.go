@@ -8,19 +8,29 @@ import (
 	"fmt"
 	"time"
 
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/security"
 )
 
 var (
-	ErrInvalidCredentials = errors.New("invalid credentials")
+	ErrInvalidCredentials = apperror.New(apperror.Unauthenticated, "invalid credentials")
+	ErrSessionInvalid     = apperror.New(apperror.Unauthenticated, "登录已失效")
 )
 
+type Store interface {
+	AdminByUsername(context.Context, string) (Admin, error)
+	CreateSession(context.Context, Session) error
+	Session(context.Context, string) (Session, error)
+	DeleteSession(context.Context, string) error
+	UpdatePassword(context.Context, string, string, string) error
+}
+
 type Service struct {
-	repository *Repository
+	repository Store
 	sessionTTL time.Duration
 }
 
-func NewService(repository *Repository, sessionTTL time.Duration) *Service {
+func NewService(repository Store, sessionTTL time.Duration) *Service {
 	return &Service{repository: repository, sessionTTL: sessionTTL}
 }
 
@@ -88,7 +98,11 @@ func (s *Service) Authenticate(ctx context.Context, sessionToken string) (Sessio
 	if sessionToken == "" {
 		return Session{}, ErrInvalidCredentials
 	}
-	return s.repository.Session(ctx, security.HashToken(sessionToken))
+	session, err := s.repository.Session(ctx, security.HashToken(sessionToken))
+	if errors.Is(err, sql.ErrNoRows) {
+		return Session{}, ErrSessionInvalid
+	}
+	return session, err
 }
 
 func (s *Service) VerifyCSRF(session Session, cookieValue, headerValue string) bool {
@@ -108,7 +122,7 @@ func (s *Service) Logout(ctx context.Context, sessionHash string) error {
 
 func (s *Service) ChangePassword(ctx context.Context, session Session, current, next, confirmation string) error {
 	if next != confirmation {
-		return errors.New("两次输入的新密码不一致")
+		return apperror.New(apperror.Validation, "两次输入的新密码不一致")
 	}
 	admin, err := s.repository.AdminByUsername(ctx, session.Username)
 	if err != nil {
@@ -116,6 +130,9 @@ func (s *Service) ChangePassword(ctx context.Context, session Session, current, 
 	}
 	if !security.VerifyPassword(current, admin.PasswordHash) {
 		return ErrInvalidCredentials
+	}
+	if err := security.ValidatePassword(next); err != nil {
+		return apperror.Wrap(apperror.Validation, err.Error(), err)
 	}
 	hash, err := security.HashPassword(next)
 	if err != nil {

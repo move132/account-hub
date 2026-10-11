@@ -2,12 +2,15 @@ package job
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"account-hub/internal/audit"
 	"account-hub/internal/auth"
+	"account-hub/internal/idempotency"
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/httpserver"
 )
 
@@ -45,24 +48,39 @@ func (h *Handler) Create(targetKind string) http.HandlerFunc {
 		if !httpserver.DecodeJSON(w, r, &body) {
 			return
 		}
-		targets, err := h.targets(r.Context(), targetKind, body.IDs)
-		if err != nil {
-			httpserver.Error(w, r, http.StatusBadRequest, "JOB_TARGETS_INVALID", err.Error(), nil)
-			return
-		}
 		session, _ := auth.SessionFromContext(r.Context())
-		job, replay, err := h.manager.Create(r.Context(), targetKind, body.Action, session.AdminID,
-			r.URL.Path, r.Header.Get("Idempotency-Key"), RequestHash(body), targets)
+		hash := RequestHash(body)
+		job, replay, err := h.manager.Replay(r.Context(), session.AdminID, r.URL.Path, r.Header.Get("Idempotency-Key"), hash)
+		if err == nil && !replay {
+			var targets []Target
+			targets, err = h.targets(r.Context(), targetKind, body.IDs)
+			if err != nil {
+				if errors.Is(err, sql.ErrNoRows) || apperror.KindOf(err) == apperror.NotFound {
+					err = apperror.Wrap(apperror.Validation, "部分任务目标不存在", err)
+				}
+				httpserver.ReportError(w, r, err, "JOB_TARGETS_INVALID", "无法读取任务目标")
+				return
+			}
+			job, replay, err = h.manager.Create(r.Context(), targetKind, body.Action, session.AdminID,
+				r.URL.Path, r.Header.Get("Idempotency-Key"), hash, targets)
+		}
+
 		if err != nil {
 			if errors.Is(err, ErrIdempotencyConflict) {
 				httpserver.Error(w, r, http.StatusConflict, "IDEMPOTENCY_CONFLICT", "Idempotency-Key 已用于不同请求", nil)
+			} else if errors.Is(err, idempotency.ErrInvalidKey) {
+				httpserver.Error(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_INVALID", "Idempotency-Key 长度不能超过 200", nil)
+			} else if errors.Is(err, idempotency.ErrUncertain) {
+				httpserver.Error(w, r, http.StatusConflict, "IDEMPOTENCY_OUTCOME_UNKNOWN", "先前任务的执行结果尚待确认", nil)
 			} else {
-				httpserver.Error(w, r, http.StatusBadRequest, "JOB_CREATE_FAILED", err.Error(), nil)
+				httpserver.ReportError(w, r, err, "JOB_CREATE_FAILED", "创建任务失败")
 			}
 			return
 		}
-		_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: targetKind + "_batch_" + body.Action,
-			TargetKind: "job", TargetID: job.ID, Summary: "创建批量任务", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
+		if !replay {
+			_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: targetKind + "_batch_" + body.Action,
+				TargetKind: "job", TargetID: job.ID, Summary: "创建批量任务", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
+		}
 		message := "任务已创建"
 		if replay {
 			message = "返回已创建的任务"
@@ -98,7 +116,7 @@ func (h *Handler) List(w http.ResponseWriter, r *http.Request) {
 	page, pageSize := queryInt(r, "page", 1), queryInt(r, "page_size", 20)
 	items, total, err := h.manager.List(r.Context(), page, pageSize)
 	if err != nil {
-		httpserver.Error(w, r, http.StatusInternalServerError, "JOB_LIST_FAILED", "查询任务失败", nil)
+		httpserver.ReportError(w, r, err, "JOB_LIST_FAILED", "查询任务失败")
 		return
 	}
 	if pageSize < 1 || pageSize > 500 {
@@ -127,12 +145,16 @@ func (h *Handler) Get(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) Cancel(w http.ResponseWriter, r *http.Request) {
 	item, err := h.manager.Cancel(r.Context(), r.PathValue("id"))
 	if err != nil {
-		httpserver.Error(w, r, http.StatusConflict, "JOB_CANCEL_FAILED", "任务不存在或无法取消", nil)
+		httpserver.ReportError(w, r, err, "JOB_CANCEL_FAILED", "取消任务失败")
 		return
 	}
 	session, _ := auth.SessionFromContext(r.Context())
 	_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: "job_cancel", TargetKind: "job", TargetID: item.ID, Summary: "取消任务", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
-	httpserver.Write(w, http.StatusOK, map[string]any{"job": item}, "任务已取消")
+	message := "任务已取消"
+	if item.Running > 0 {
+		message = "取消请求已提交，等待运行中的条目结束"
+	}
+	httpserver.Write(w, http.StatusOK, map[string]any{"job": item}, message)
 }
 
 func (h *Handler) Delete(w http.ResponseWriter, r *http.Request) {
@@ -170,7 +192,7 @@ func writeDeleteError(w http.ResponseWriter, r *http.Request, err error) {
 	case errors.Is(err, ErrActive):
 		httpserver.Error(w, r, http.StatusConflict, "JOB_ACTIVE", "任务尚未结束，请先取消或等待执行完成", nil)
 	default:
-		httpserver.Error(w, r, http.StatusInternalServerError, "JOB_DELETE_FAILED", "删除任务失败", nil)
+		httpserver.ReportError(w, r, err, "JOB_DELETE_FAILED", "删除任务失败")
 	}
 }
 

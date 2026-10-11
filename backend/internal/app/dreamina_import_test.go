@@ -26,6 +26,9 @@ func TestDreaminaLegacySessionImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer application.Shutdown(context.Background())
+	if err := application.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(application.Handler())
 	defer server.Close()
 	response := login(t, server.URL, application.initialAdminPassword)

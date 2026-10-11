@@ -7,10 +7,14 @@ import (
 	"strings"
 	"time"
 
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/security"
+	platformsqlite "account-hub/internal/platform/sqlite"
 )
 
-var ErrVersionConflict = errors.New("version conflict")
+var ErrNotFound = apperror.Wrap(apperror.NotFound, "账号不存在", sql.ErrNoRows)
+
+var ErrVersionConflict = apperror.New(apperror.Conflict, "记录已被其他操作修改，请刷新后重试")
 
 type Repository struct{ db *sql.DB }
 
@@ -18,7 +22,7 @@ func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
 
 const accountColumns = `id, email, password, session_id, COALESCE(session_expires_at, ''), status,
     check_state, credit_balance, note, next_refresh_at, last_checked_at, last_refreshed_at,
-    COALESCE(last_error_code, ''), COALESCE(last_error_message, ''), version, created_at, updated_at`
+    COALESCE(last_error_code, ''), COALESCE(last_error_message, ''), version, created_at, updated_at, credential_version, refresh_failures`
 
 type scanner interface{ Scan(...any) error }
 
@@ -27,7 +31,7 @@ func scanRecord(row scanner) (Record, error) {
 	var next, checked, refreshed sql.NullInt64
 	err := row.Scan(&record.ID, &record.Email, &record.Password, &record.SessionID, &record.SessionExpiresAt,
 		&record.Status, &record.CheckState, &record.CreditBalance, &record.Note, &next, &checked, &refreshed,
-		&record.LastErrorCode, &record.LastErrorMessage, &record.Version, &record.CreatedAt, &record.UpdatedAt)
+		&record.LastErrorCode, &record.LastErrorMessage, &record.Version, &record.CreatedAt, &record.UpdatedAt, &record.CredentialVersion, &record.RefreshFailures)
 	if next.Valid {
 		record.NextRefreshAt = &next.Int64
 	}
@@ -37,10 +41,38 @@ func scanRecord(row scanner) (Record, error) {
 	if refreshed.Valid {
 		record.LastRefreshedAt = &refreshed.Int64
 	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return Record{}, ErrNotFound
+	}
 	return record, err
 }
 
 func (r *Repository) Create(ctx context.Context, input CreateInput) (Record, error) {
+	return r.createRecord(ctx, r.db, input)
+}
+
+func (r *Repository) CreateWithCommit(ctx context.Context, input CreateInput, after func(context.Context, *sql.Tx, Record) error) (Record, error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Record{}, err
+	}
+	defer tx.Rollback()
+	record, err := r.createRecord(ctx, tx, input)
+	if err != nil {
+		return Record{}, err
+	}
+	if after != nil {
+		if err := after(ctx, tx, record); err != nil {
+			return Record{}, err
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return Record{}, err
+	}
+	return record, nil
+}
+
+func (r *Repository) createRecord(ctx context.Context, db platformsqlite.DBTX, input CreateInput) (Record, error) {
 	id, err := security.RandomID("dream")
 	if err != nil {
 		return Record{}, err
@@ -50,14 +82,14 @@ func (r *Repository) Create(ctx context.Context, input CreateInput) (Record, err
 	if status == "" {
 		status = "enabled"
 	}
-	_, err = r.db.ExecContext(ctx, `INSERT INTO dreamina_accounts
+	_, err = db.ExecContext(ctx, `INSERT INTO dreamina_accounts
         (id, email, password, session_id, session_expires_at, status, note, created_at, updated_at)
         VALUES(?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?)`, id, input.Email, input.Password, input.SessionID,
 		input.SessionExpiresAt, status, input.Note, now, now)
 	if err != nil {
 		return Record{}, err
 	}
-	return r.Get(ctx, id)
+	return scanRecord(db.QueryRowContext(ctx, "SELECT "+accountColumns+" FROM dreamina_accounts WHERE id = ?", id))
 }
 
 func (r *Repository) Get(ctx context.Context, id string) (Record, error) {
@@ -187,6 +219,17 @@ func (r *Repository) Update(ctx context.Context, id string, input UpdateInput) (
 	if len(sets) == 0 {
 		return r.Get(ctx, id)
 	}
+	credentialsChanged := false
+	if input.Email != nil || input.Password != nil || input.SessionID != nil {
+		current, err := r.Get(ctx, id)
+		if err != nil {
+			return Record{}, err
+		}
+		credentialsChanged = (input.Email != nil && *input.Email != current.Email) || (input.Password != nil && *input.Password != current.Password) || (input.SessionID != nil && *input.SessionID != current.SessionID)
+	}
+	if credentialsChanged {
+		sets = append(sets, "credential_version = credential_version + 1", "refresh_failures = 0", "check_state = 'unchecked'", "last_checked_at = NULL", "last_error_code = NULL", "last_error_message = NULL")
+	}
 	sets = append(sets, "version = version + 1", "updated_at = ?")
 	args = append(args, time.Now().UTC().UnixMilli(), id, input.Version)
 	result, err := r.db.ExecContext(ctx, "UPDATE dreamina_accounts SET "+strings.Join(sets, ", ")+" WHERE id = ? AND version = ?", args...)
@@ -207,45 +250,9 @@ func (r *Repository) Delete(ctx context.Context, id string) error {
 	}
 	changed, _ := result.RowsAffected()
 	if changed == 0 {
-		return sql.ErrNoRows
+		return ErrNotFound
 	}
 	return nil
-}
-
-func (r *Repository) UpdateCheck(ctx context.Context, id, state, credit, code, message string) error {
-	now := time.Now().UTC().UnixMilli()
-	_, err := r.db.ExecContext(ctx, `UPDATE dreamina_accounts SET check_state = ?,
-        credit_balance = CASE WHEN ? <> '' THEN ? ELSE credit_balance END, last_checked_at = ?,
-        last_error_code = NULLIF(?, ''), last_error_message = NULLIF(?, ''), version = version + 1,
-        updated_at = ? WHERE id = ?`, state, credit, credit, now, code, message, now, id)
-	return err
-}
-
-func (r *Repository) UpdateRefresh(ctx context.Context, id string, login LoginResult, next int64) error {
-	now := time.Now().UTC().UnixMilli()
-	_, err := r.db.ExecContext(ctx, `UPDATE dreamina_accounts SET session_id = ?, session_expires_at = NULLIF(?, ''),
-        check_state = 'valid', last_refreshed_at = ?, last_checked_at = ?, next_refresh_at = ?,
-        last_error_code = NULL, last_error_message = NULL, version = version + 1, updated_at = ? WHERE id = ?`,
-		login.SessionID, login.SessionExpiresAt, now, now, next, now, id)
-	return err
-}
-
-func (r *Repository) SetCredit(ctx context.Context, id, balance string) error {
-	_, err := r.db.ExecContext(ctx, "UPDATE dreamina_accounts SET credit_balance = ?, updated_at = ? WHERE id = ?", balance, time.Now().UTC().UnixMilli(), id)
-	return err
-}
-
-func (r *Repository) RecordAttempt(ctx context.Context, attempt Attempt) error {
-	var accountID any
-	if attempt.AccountID != "" {
-		accountID = attempt.AccountID
-	}
-	_, err := r.db.ExecContext(ctx, `INSERT INTO dreamina_refresh_attempts
-        (id, account_id, target_label, operation, status, error_code, error_message, started_at, completed_at)
-        VALUES(?, ?, ?, ?, ?, NULLIF(?, ''), NULLIF(?, ''), ?, ?)`, attempt.ID, accountID,
-		attempt.TargetLabel, attempt.Operation, attempt.Status, attempt.ErrorCode, attempt.ErrorMessage,
-		attempt.StartedAt, attempt.CompletedAt)
-	return err
 }
 
 func (r *Repository) Attempts(ctx context.Context, accountID string, limit int) ([]Attempt, error) {
@@ -293,15 +300,9 @@ func (r *Repository) DueIDs(ctx context.Context, now int64, limit int) ([]string
 	return ids, rows.Err()
 }
 
-func (r *Repository) SetNextRefresh(ctx context.Context, id string, next int64, code, message string) error {
-	_, err := r.db.ExecContext(ctx, `UPDATE dreamina_accounts SET next_refresh_at = ?, last_error_code = NULLIF(?, ''),
-        last_error_message = NULLIF(?, ''), updated_at = ? WHERE id = ?`, next, code, message, time.Now().UTC().UnixMilli(), id)
-	return err
-}
-
 func (r *Repository) SetStatus(ctx context.Context, id, status string) error {
 	if status != "enabled" && status != "disabled" {
-		return errors.New("invalid status")
+		return apperror.New(apperror.Validation, "invalid status")
 	}
 	result, err := r.db.ExecContext(ctx, "UPDATE dreamina_accounts SET status = ?, version = version + 1, updated_at = ? WHERE id = ?", status, time.Now().UTC().UnixMilli(), id)
 	if err != nil {
@@ -309,11 +310,12 @@ func (r *Repository) SetStatus(ctx context.Context, id, status string) error {
 	}
 	changed, _ := result.RowsAffected()
 	if changed == 0 {
-		return sql.ErrNoRows
+		return ErrNotFound
 	}
 	return nil
 }
 
 func IsUniqueError(err error) bool {
-	return err != nil && strings.Contains(strings.ToLower(err.Error()), "unique constraint")
+	var driverErr interface{ Code() int }
+	return errors.As(err, &driverErr) && (driverErr.Code() == 2067 || driverErr.Code() == 1555)
 }

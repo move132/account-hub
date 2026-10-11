@@ -1,23 +1,25 @@
 package token
 
 type Record struct {
-	ID               string
-	Name             string
-	Email            string
-	AccessToken      string
-	SessionToken     string
-	AccessExpiresAt  string
-	Status           string
-	CheckState       string
-	Note             string
-	NextRefreshAt    *int64
-	LastCheckedAt    *int64
-	LastRefreshedAt  *int64
-	LastErrorCode    string
-	LastErrorMessage string
-	Version          int
-	CreatedAt        int64
-	UpdatedAt        int64
+	CredentialVersion int
+	RefreshFailures   int
+	ID                string
+	Name              string
+	Email             string
+	AccessToken       string
+	SessionToken      string
+	AccessExpiresAt   string
+	Status            string
+	CheckState        string
+	Note              string
+	NextRefreshAt     *int64
+	LastCheckedAt     *int64
+	LastRefreshedAt   *int64
+	LastErrorCode     string
+	LastErrorMessage  string
+	Version           int
+	CreatedAt         int64
+	UpdatedAt         int64
 }
 
 type View struct {
@@ -78,6 +80,7 @@ type ListFilter struct {
 }
 
 type Attempt struct {
+	OperationKey string `json:"-"`
 	ID           string `json:"id"`
 	TokenID      string `json:"token_id,omitempty"`
 	TargetLabel  string `json:"target_label"`

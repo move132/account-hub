@@ -238,9 +238,8 @@ func TestBrowserClientProxySettings(t *testing.T) {
 	defer client.CloseIdleConnections()
 	for _, enabled := range []bool{false, true, false} {
 		proxyURL := strings.Replace(proxy.URL, "http://", "http://proxy-user:proxy-password@", 1)
-		if _, err := client.settings.Update(context.Background(), map[string]any{"proxy_enabled": enabled, "proxy_url": proxyURL}); err != nil {
-			t.Fatal(err)
-		}
+		client.proxy.(*testProxySettings).value.Enabled = enabled
+		client.proxy.(*testProxySettings).value.URL = proxyURL
 		response, err := client.Do(context.Background(), func(_ *http.Client) (*http.Request, error) {
 			return http.NewRequest(http.MethodGet, origin.URL, nil)
 		})

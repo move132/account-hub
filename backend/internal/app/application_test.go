@@ -35,6 +35,9 @@ func TestAuthenticationAndSettingsFlow(t *testing.T) {
 		t.Fatalf("New: %v", err)
 	}
 	defer application.Shutdown(context.Background())
+	if err := application.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	server := httptest.NewServer(application.Handler())
 	defer server.Close()
 
@@ -192,6 +195,9 @@ func TestAdminPasswordCanBeChangedAfterBootstrap(t *testing.T) {
 	application, err := New(context.Background(), config, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatalf("New: %v", err)
+	}
+	if err := application.Start(context.Background()); err != nil {
+		t.Fatal(err)
 	}
 	server := httptest.NewServer(application.Handler())
 

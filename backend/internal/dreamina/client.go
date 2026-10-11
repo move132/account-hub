@@ -34,11 +34,11 @@ type Client struct {
 
 func NewClient(client *upstream.Client, timezone string) *Client {
 	return &Client{
-		http: client, 
-		loginBase: "https://login.us.capcut.com",
-		commerceBase: "https://commerce.us.capcut.com", 
-		assetsBase: "https://dreamina-api-us-ttp2.us.capcut.com",
-		timezone: timezone,
+		http:         client,
+		loginBase:    "https://login.us.capcut.com",
+		commerceBase: "https://commerce.us.capcut.com",
+		assetsBase:   "https://dreamina-api-us-ttp2.us.capcut.com",
+		timezone:     timezone,
 	}
 }
 

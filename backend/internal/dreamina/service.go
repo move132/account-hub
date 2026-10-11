@@ -9,20 +9,26 @@ import (
 	"strings"
 	"time"
 
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/security"
 	"account-hub/internal/platform/upstream"
 	"account-hub/internal/settings"
 )
 
+type SettingsReader interface {
+	Snapshot(context.Context) (settings.Snapshot, error)
+}
+
 type Service struct {
 	repository *Repository
 	client     UpstreamClient
-	settings   *settings.Repository
+	settings   SettingsReader
+	now        func() time.Time
 	logger     *slog.Logger
 }
 
-func NewService(repository *Repository, client UpstreamClient, settingsRepository *settings.Repository) *Service {
-	return &Service{repository: repository, client: client, settings: settingsRepository, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
+func NewService(repository *Repository, client UpstreamClient, settingsRepository SettingsReader) *Service {
+	return &Service{repository: repository, client: client, settings: settingsRepository, now: time.Now, logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 }
 
 func (s *Service) WithLogger(logger *slog.Logger) *Service {
@@ -48,21 +54,39 @@ func ToEditView(record Record) EditView {
 	return EditView{View: ToView(record), Password: record.Password, SessionID: record.SessionID}
 }
 
-func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
+func normalizeCreate(input CreateInput) (CreateInput, error) {
 	input.Email = strings.ToLower(strings.TrimSpace(input.Email))
 	input.Password = strings.TrimSpace(input.Password)
 	input.SessionID = strings.TrimSpace(input.SessionID)
 	input.Note = strings.TrimSpace(input.Note)
 	if input.Email == "" || input.Password == "" {
-		return View{}, errors.New("email 和 password 不能为空")
+		return CreateInput{}, apperror.New(apperror.Validation, "email 和 password 不能为空")
 	}
 	if err := validateLengths(input.Email, input.Password, input.SessionID, input.Note); err != nil {
-		return View{}, err
+		return CreateInput{}, err
 	}
 	if input.Status != "" && input.Status != "enabled" && input.Status != "disabled" {
-		return View{}, errors.New("status 只能是 enabled 或 disabled")
+		return CreateInput{}, apperror.New(apperror.Validation, "status 只能是 enabled 或 disabled")
 	}
-	record, err := s.repository.Create(ctx, input)
+
+	return input, nil
+}
+
+func (s *Service) Create(ctx context.Context, input CreateInput) (View, error) {
+	normalized, err := normalizeCreate(input)
+	if err != nil {
+		return View{}, err
+	}
+	record, err := s.repository.Create(ctx, normalized)
+	return ToView(record), err
+}
+
+func (s *Service) createWithCommit(ctx context.Context, input CreateInput, after func(context.Context, *sql.Tx, View) error) (View, error) {
+	normalized, err := normalizeCreate(input)
+	if err != nil {
+		return View{}, err
+	}
+	record, err := s.repository.CreateWithCommit(ctx, normalized, func(ctx context.Context, tx *sql.Tx, record Record) error { return after(ctx, tx, ToView(record)) })
 	return ToView(record), err
 }
 
@@ -96,15 +120,15 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 	if input.Email != nil {
 		normalized := strings.ToLower(strings.TrimSpace(*input.Email))
 		if normalized == "" {
-			return View{}, errors.New("email 不能为空")
+			return View{}, apperror.New(apperror.Validation, "email 不能为空")
 		}
 		input.Email = &normalized
 	}
 	if input.Password != nil && strings.TrimSpace(*input.Password) == "" {
-		return View{}, errors.New("password 不能为空")
+		return View{}, apperror.New(apperror.Validation, "password 不能为空")
 	}
 	if input.Status != nil && *input.Status != "enabled" && *input.Status != "disabled" {
-		return View{}, errors.New("status 只能是 enabled 或 disabled")
+		return View{}, apperror.New(apperror.Validation, "status 只能是 enabled 或 disabled")
 	}
 	if err := validateOptionalLengths(input); err != nil {
 		return View{}, err
@@ -116,13 +140,13 @@ func (s *Service) Update(ctx context.Context, id string, input UpdateInput) (Vie
 func validateLengths(email, password, sessionID, note string) error {
 	switch {
 	case len([]rune(email)) > 320:
-		return errors.New("email 不能超过 320 个字符")
+		return apperror.New(apperror.Validation, "email 不能超过 320 个字符")
 	case len(password) > 4096:
-		return errors.New("password 不能超过 4096 字节")
+		return apperror.New(apperror.Validation, "password 不能超过 4096 字节")
 	case len(sessionID) > 256*1024:
-		return errors.New("session_id 不能超过 256 KB")
+		return apperror.New(apperror.Validation, "session_id 不能超过 256 KB")
 	case len([]rune(note)) > 2000:
-		return errors.New("note 不能超过 2000 个字符")
+		return apperror.New(apperror.Validation, "note 不能超过 2000 个字符")
 	}
 	return nil
 }
@@ -151,36 +175,27 @@ func (s *Service) Check(ctx context.Context, id string) (View, CreditResult, err
 	if err != nil {
 		return View{}, CreditResult{}, err
 	}
+	if completed, err := s.repository.operationCompleted(ctx, id, "check"); err != nil {
+		return View{}, CreditResult{}, err
+	} else if completed {
+		return ToView(record), CreditResult{Balance: record.CreditBalance}, nil
+	}
 	if record.SessionID == "" {
-		s.logger.Warn("dreamina check skipped", "account_id", id, "email", record.Email, "reason", "missing_session_id")
-		return View{}, CreditResult{}, errors.New("该账号没有 session_id")
+		return View{}, CreditResult{}, apperror.New(apperror.Validation, "该账号没有 session_id")
 	}
-	startedAt := time.Now()
-	s.logger.Info("dreamina check started", "account_id", id, "email", record.Email, "status", record.Status)
-	started := time.Now().UTC().UnixMilli()
-	credit, operationErr := s.client.Check(ctx, record.SessionID)
-	completed := time.Now().UTC().UnixMilli()
-	s.recordAttempt(ctx, record, "check", started, completed, operationErr)
-	if operationErr != nil {
-		state := "error"
-		if upstream.Code(operationErr) == upstream.InvalidCredentials {
-			state = "invalid"
-		}
-		_ = s.repository.UpdateCheck(ctx, id, state, "", upstream.Code(operationErr), operationErr.Error())
-		s.logger.Warn("dreamina check failed", "account_id", id, "email", record.Email, "state", state, "error_code", upstream.Code(operationErr), "error", operationErr, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return View{}, CreditResult{}, operationErr
-	}
-	if err := s.repository.UpdateCheck(ctx, id, "valid", credit.Balance, "", ""); err != nil {
-		s.logger.Error("dreamina check database update failed", "account_id", id, "email", record.Email, "error", err, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return View{}, CreditResult{}, err
-	}
-	view, err := s.Get(ctx, id)
+	attempt, err := s.newAttempt(ctx, record, "check")
 	if err != nil {
-		s.logger.Error("dreamina check reload failed", "account_id", id, "email", record.Email, "error", err, "elapsed_ms", time.Since(startedAt).Milliseconds())
 		return View{}, CreditResult{}, err
 	}
-	s.logger.Info("dreamina check succeeded", "account_id", id, "email", record.Email, "credit_balance", credit.Balance, "elapsed_ms", time.Since(startedAt).Milliseconds())
-	return view, credit, err
+	credit, operationErr := s.client.Check(ctx, record.SessionID)
+	s.finishAttempt(&attempt, operationErr)
+	writeCtx, cancel := completionContext(ctx)
+	defer cancel()
+	updated, err := s.repository.CompleteCheck(writeCtx, record, checkState(operationErr), credit.Balance, attempt.ErrorCode, attempt.ErrorMessage, attempt)
+	if err != nil {
+		return View{}, CreditResult{}, err
+	}
+	return ToView(updated), credit, operationErr
 }
 
 func (s *Service) Refresh(ctx context.Context, id string) (View, error) {
@@ -188,25 +203,26 @@ func (s *Service) Refresh(ctx context.Context, id string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	startedAt := time.Now()
-	s.logger.Info("dreamina refresh started", "account_id", id, "email", record.Email, "status", record.Status)
-	started := time.Now().UTC().UnixMilli()
-	login, operationErr := s.client.Login(ctx, record.Email, record.Password)
-	completed := time.Now().UTC().UnixMilli()
-	s.recordAttempt(ctx, record, "refresh", started, completed, operationErr)
-	intervalDays := s.intSetting(ctx, "dreamina_refresh_interval_days", 7)
-	next := time.Now().UTC().Add(time.Duration(intervalDays) * 24 * time.Hour).UnixMilli()
-	if operationErr != nil {
-		_ = s.repository.SetNextRefresh(ctx, id, next, upstream.Code(operationErr), operationErr.Error())
-		s.logger.Warn("dreamina refresh failed", "account_id", id, "email", record.Email, "error_code", upstream.Code(operationErr), "error", operationErr, "next_refresh_at", next, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return View{}, operationErr
+	if completed, err := s.repository.operationCompleted(ctx, id, "refresh"); err != nil {
+		return View{}, err
+	} else if completed {
+		return ToView(record), nil
 	}
-	if err := s.repository.UpdateRefresh(ctx, id, login, next); err != nil {
-		s.logger.Error("dreamina refresh database update failed", "account_id", id, "email", record.Email, "error", err, "elapsed_ms", time.Since(startedAt).Milliseconds())
+	attempt, err := s.newAttempt(ctx, record, "refresh")
+	if err != nil {
 		return View{}, err
 	}
-	s.logger.Info("dreamina refresh succeeded", "account_id", id, "email", record.Email, "session_expires_at", login.SessionExpiresAt, "next_refresh_at", next, "elapsed_ms", time.Since(startedAt).Milliseconds())
-	return s.Get(ctx, id)
+	login, operationErr := s.client.Login(ctx, record.Email, record.Password)
+	s.finishAttempt(&attempt, operationErr)
+	writeCtx, cancel := completionContext(ctx)
+	defer cancel()
+	next := refreshDeadline(ctx, record, s.now().UTC(), s.refreshInterval(writeCtx), operationErr)
+	updated, err := s.repository.CompleteRefresh(writeCtx, record, login, next, attempt)
+	if err != nil {
+		s.logger.Error("dreamina refresh outcome could not be committed", "account_id", id, "error", err, "upstream_succeeded", operationErr == nil)
+		return View{}, err
+	}
+	return ToView(updated), operationErr
 }
 
 func (s *Service) Credit(ctx context.Context, id string) (CreditResult, error) {
@@ -214,62 +230,62 @@ func (s *Service) Credit(ctx context.Context, id string) (CreditResult, error) {
 	return credit, err
 }
 
-func (s *Service) ClaimCredit(ctx context.Context, id string) (any, error) {
-	record, err := s.repository.Get(ctx, id)
-	if err != nil {
-		return nil, err
+func checkState(err error) string {
+	if err == nil {
+		return "valid"
 	}
-	if record.SessionID == "" {
-		s.logger.Warn("dreamina credit claim skipped", "account_id", id, "email", record.Email, "reason", "missing_session_id")
-		return nil, errors.New("该账号没有 session_id")
+	if upstream.Code(err) == upstream.InvalidCredentials {
+		return "invalid"
 	}
-	startedAt := time.Now()
-	s.logger.Info("dreamina credit claim started", "account_id", id, "email", record.Email, "status", record.Status)
-	started := time.Now().UTC().UnixMilli()
-	result, operationErr := s.client.ClaimCredit(ctx, record.SessionID)
-	completed := time.Now().UTC().UnixMilli()
-	s.recordAttempt(ctx, record, "credit_claim", started, completed, operationErr)
-	if operationErr != nil {
-		s.logger.Warn("dreamina credit claim failed", "account_id", id, "email", record.Email, "error_code", upstream.Code(operationErr), "error", operationErr, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return nil, operationErr
-	}
-	credit, checkErr := s.client.Check(ctx, record.SessionID)
-	if checkErr != nil {
-		state := "error"
-		if upstream.Code(checkErr) == upstream.InvalidCredentials {
-			state = "invalid"
-		}
-		_ = s.repository.UpdateCheck(ctx, id, state, "", upstream.Code(checkErr), checkErr.Error())
-		s.logger.Warn("dreamina credit balance refresh after claim failed", "account_id", id, "email", record.Email, "error_code", upstream.Code(checkErr), "error", checkErr)
-		return nil, checkErr
-	}
-	if err := s.repository.UpdateCheck(ctx, id, "valid", credit.Balance, "", ""); err != nil {
-		s.logger.Error("dreamina credit balance update after claim failed", "account_id", id, "email", record.Email, "error", err)
-		return nil, err
-	}
-	s.logger.Info("dreamina credit balance refreshed after claim", "account_id", id, "email", record.Email, "credit_balance", credit.Balance)
-	s.logger.Info("dreamina credit claim succeeded", "account_id", id, "email", record.Email, "elapsed_ms", time.Since(startedAt).Milliseconds())
-	return result, nil
+	return "error"
 }
 
-func (s *Service) Assets(ctx context.Context, id string, offset, count int) (any, error) {
+func (s *Service) newAttempt(ctx context.Context, record Record, operation string) (Attempt, error) {
+	id, err := security.RandomID("da")
+	if err != nil {
+		return Attempt{}, err
+	}
+	return Attempt{ID: id, OperationKey: operationKey(ctx), AccountID: record.ID, TargetLabel: record.Email, Operation: operation, StartedAt: s.now().UTC().UnixMilli()}, nil
+}
+
+func (s *Service) finishAttempt(attempt *Attempt, operationErr error) {
+	completed := s.now().UTC().UnixMilli()
+	attempt.CompletedAt, attempt.Status = &completed, "succeeded"
+	if operationErr != nil {
+		attempt.OperationKey = ""
+		attempt.Status, attempt.ErrorCode, attempt.ErrorMessage = "failed", upstream.Code(operationErr), operationErr.Error()
+	}
+}
+
+func (s *Service) Assets(ctx context.Context, id string, offset, count int) (AssetPage, error) {
+	if offset < 0 {
+		offset = 0
+	}
+	if count < 1 || count > 100 {
+		count = 50
+	}
 	record, err := s.repository.Get(ctx, id)
 	if err != nil {
-		return nil, err
+		return AssetPage{}, err
 	}
 	if record.SessionID == "" {
 		s.logger.Warn("dreamina assets skipped", "account_id", id, "email", record.Email, "reason", "missing_session_id", "offset", offset, "count", count)
-		return nil, errors.New("该账号没有 session_id")
+		return AssetPage{}, apperror.New(apperror.Validation, "该账号没有 session_id")
 	}
 	startedAt := time.Now()
 	s.logger.Info("dreamina assets started", "account_id", id, "email", record.Email, "offset", offset, "count", count)
 	result, err := s.client.Assets(ctx, record.SessionID, offset, count)
 	if err != nil {
 		s.logger.Warn("dreamina assets failed", "account_id", id, "email", record.Email, "offset", offset, "count", count, "error_code", upstream.Code(err), "error", err, "elapsed_ms", time.Since(startedAt).Milliseconds())
-		return nil, err
+		return AssetPage{}, err
+	}
+	page, err := normalizeAssetPage(result, offset)
+	if err != nil {
+		s.logger.Warn("dreamina assets normalization failed", "account_id", id, "offset", offset, "count", count, "error_code", upstream.Code(err), "error", err)
+		return AssetPage{}, err
 	}
 	s.logger.Info("dreamina assets succeeded", "account_id", id, "email", record.Email, "offset", offset, "count", count, "elapsed_ms", time.Since(startedAt).Milliseconds())
-	return result, nil
+	return page, nil
 }
 
 func (s *Service) Attempts(ctx context.Context, id string, limit int) ([]Attempt, error) {
@@ -284,29 +300,19 @@ func (s *Service) SetStatus(ctx context.Context, id, status string) error {
 }
 
 func (s *Service) DueIDs(ctx context.Context, limit int) ([]string, error) {
-	return s.repository.DueIDs(ctx, time.Now().UTC().UnixMilli(), limit)
+	return s.repository.DueIDs(ctx, s.now().UTC().UnixMilli(), limit)
 }
 
-func (s *Service) recordAttempt(ctx context.Context, record Record, operation string, started, completed int64, operationErr error) {
-	id, _ := security.RandomID("da")
-	attempt := Attempt{ID: id, AccountID: record.ID, TargetLabel: record.Email, Operation: operation, Status: "succeeded", StartedAt: started, CompletedAt: &completed}
-	if operationErr != nil {
-		attempt.Status, attempt.ErrorCode, attempt.ErrorMessage = "failed", upstream.Code(operationErr), operationErr.Error()
+func (s *Service) refreshInterval(ctx context.Context) time.Duration {
+	snapshot, err := s.settings.Snapshot(ctx)
+	if err != nil {
+		s.logger.Warn("read refresh policy", "error", err)
+		return 7 * 24 * time.Hour
 	}
-	_ = s.repository.RecordAttempt(ctx, attempt)
+	return snapshot.Dreamina.Interval
 }
 
-func (s *Service) intSetting(ctx context.Context, key string, fallback int) int {
-	values, err := s.settings.Values(ctx)
-	if err == nil {
-		if value, ok := values[key].(int); ok {
-			return value
-		}
-	}
-	return fallback
-}
-
-func IsNotFound(err error) bool { return errors.Is(err, sql.ErrNoRows) }
+func IsNotFound(err error) bool { return errors.Is(err, ErrNotFound) || errors.Is(err, sql.ErrNoRows) }
 func ErrorCode(err error) string {
 	if errors.Is(err, ErrVersionConflict) {
 		return "VERSION_CONFLICT"
@@ -314,5 +320,16 @@ func ErrorCode(err error) string {
 	if IsNotFound(err) {
 		return "DREAMINA_NOT_FOUND"
 	}
-	return upstream.Code(err)
+	var providerErr *upstream.Error
+	if errors.As(err, &providerErr) {
+		return providerErr.Code
+	}
+	switch apperror.KindOf(err) {
+	case apperror.Validation:
+		return "VALIDATION_FAILED"
+	case apperror.Conflict:
+		return "VERSION_CONFLICT"
+	default:
+		return "INTERNAL_ERROR"
+	}
 }

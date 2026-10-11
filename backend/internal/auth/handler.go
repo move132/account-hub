@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"account-hub/internal/audit"
+	"account-hub/internal/platform/apperror"
 	"account-hub/internal/platform/httpserver"
+	"account-hub/internal/platform/principal"
 	"account-hub/internal/platform/security"
 )
 
@@ -52,11 +54,16 @@ func (h *Handler) Require(next http.Handler) http.Handler {
 		}
 		session, err := h.service.Authenticate(r.Context(), cookie.Value)
 		if err != nil {
-			clearCookies(w)
-			httpserver.Error(w, r, http.StatusUnauthorized, "SESSION_INVALID", "登录已失效", nil)
+			if apperror.KindOf(err) == apperror.Unauthenticated {
+				clearCookies(w)
+				httpserver.Error(w, r, http.StatusUnauthorized, "SESSION_INVALID", "登录已失效", nil)
+			} else {
+				httpserver.ReportError(w, r, err, "AUTH_UNAVAILABLE", "暂时无法验证登录状态")
+			}
 			return
 		}
 		ctx := context.WithValue(r.Context(), sessionKey, session)
+		ctx = principal.WithContext(ctx, principal.Identity{Kind: principal.Admin, ID: session.AdminID})
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
@@ -89,13 +96,15 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionToken, csrfToken, session, err := h.service.Login(r.Context(), body.Username, body.Password)
 	if err != nil {
-		h.recordFailure(key)
+		if errors.Is(err, ErrInvalidCredentials) {
+			h.recordFailure(key)
+		}
 		_ = h.audit.Log(r.Context(), audit.Entry{Action: "login_failed", TargetKind: "auth", Summary: "管理员登录失败", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
 		if errors.Is(err, ErrInvalidCredentials) {
 			httpserver.Error(w, r, http.StatusUnauthorized, "AUTH_INVALID_CREDENTIALS", "用户名或密码错误", nil)
 			return
 		}
-		httpserver.Error(w, r, http.StatusInternalServerError, "LOGIN_FAILED", "登录失败", nil)
+		httpserver.ReportError(w, r, err, "LOGIN_FAILED", "登录失败")
 		return
 	}
 	h.clearFailures(key)
@@ -116,8 +125,12 @@ func remoteHost(address string) string {
 
 func (h *Handler) Logout(w http.ResponseWriter, r *http.Request) {
 	session, _ := SessionFromContext(r.Context())
-	_ = h.service.Logout(r.Context(), session.IDHash)
+	err := h.service.Logout(r.Context(), session.IDHash)
 	clearCookies(w)
+	if err != nil {
+		httpserver.ReportError(w, r, err, "LOGOUT_FAILED", "服务端会话撤销失败，请重试")
+		return
+	}
 	_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: "logout", TargetKind: "auth", Summary: "管理员退出", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
 	httpserver.Write(w, http.StatusOK, nil, "退出成功")
 }
@@ -139,16 +152,16 @@ func (h *Handler) ChangePassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	session, _ := SessionFromContext(r.Context())
-	if err := h.service.ChangePassword(r.Context(), session, body.CurrentPassword, body.NewPassword, body.ConfirmPassword); err != nil {
+	ctx := audit.WithEntry(r.Context(), audit.Entry{AdminID: session.AdminID, Action: "password_change", TargetKind: "auth", Summary: "修改管理员密码", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
+	if err := h.service.ChangePassword(ctx, session, body.CurrentPassword, body.NewPassword, body.ConfirmPassword); err != nil {
 		switch {
 		case errors.Is(err, ErrInvalidCredentials):
 			httpserver.Error(w, r, http.StatusUnauthorized, "CURRENT_PASSWORD_INVALID", "当前密码错误", nil)
 		default:
-			httpserver.Error(w, r, http.StatusBadRequest, "PASSWORD_CHANGE_FAILED", err.Error(), nil)
+			httpserver.ReportError(w, r, err, "PASSWORD_CHANGE_FAILED", "密码修改失败")
 		}
 		return
 	}
-	_ = h.audit.Log(r.Context(), audit.Entry{AdminID: session.AdminID, Action: "password_change", TargetKind: "auth", Summary: "修改管理员密码", RequestID: httpserver.RequestID(r.Context()), RemoteAddr: r.RemoteAddr})
 	httpserver.Write(w, http.StatusOK, nil, "密码修改成功")
 }
 
