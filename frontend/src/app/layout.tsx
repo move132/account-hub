@@ -1,6 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import Key from "lucide-react/dist/esm/icons/key.mjs";
+import LayoutDashboard from "lucide-react/dist/esm/icons/layout-dashboard.mjs";
 import ListTodo from "lucide-react/dist/esm/icons/list-todo.mjs";
 import LockKeyhole from "lucide-react/dist/esm/icons/lock-keyhole.mjs";
 import LogOut from "lucide-react/dist/esm/icons/log-out.mjs";
@@ -21,6 +22,7 @@ const navGroups = [
   {
     label: "账号管理",
     items: [
+      { to: "/overview", label: "账号总览", icon: LayoutDashboard },
       { to: "/tokens", label: "GPT账号", icon: Key },
       { to: "/dreamina", label: "即梦账号", icon: UsersRound },
     ],

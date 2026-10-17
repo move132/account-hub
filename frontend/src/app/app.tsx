@@ -5,6 +5,7 @@ import { useAuth } from "./auth-context";
 const AppLayout = lazy(() => import("./layout").then((module) => ({ default: module.AppLayout })));
 const LoginPage = lazy(() => import("../features/auth/login-page").then((module) => ({ default: module.LoginPage })));
 const PasswordPage = lazy(() => import("../features/auth/password-page").then((module) => ({ default: module.PasswordPage })));
+const OverviewPage = lazy(() => import("../features/overview/overview-page").then((module) => ({ default: module.OverviewPage })));
 const TokensPage = lazy(() => import("../features/tokens/tokens-page").then((module) => ({ default: module.TokensPage })));
 const TokenDetailPage = lazy(() => import("../features/tokens/token-detail-page").then((module) => ({ default: module.TokenDetailPage })));
 const DreaminaPage = lazy(() => import("../features/dreamina/dreamina-page").then((module) => ({ default: module.DreaminaPage })));
@@ -29,7 +30,8 @@ export function App() {
       <Route path="/login" element={<LoginPage />} />
       <Route element={<RequireAuth />}>
         <Route element={<AppLayout />}>
-          <Route index element={<Navigate to="/tokens" replace />} />
+          <Route index element={<Navigate to="/overview" replace />} />
+          <Route path="/overview" element={<OverviewPage />} />
           <Route path="/tokens" element={<TokensPage />} />
           <Route path="/tokens/:id" element={<TokenDetailPage />} />
           <Route path="/dreamina" element={<DreaminaPage />} />

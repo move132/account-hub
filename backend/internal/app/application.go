@@ -15,6 +15,7 @@ import (
 	"account-hub/internal/dreamina"
 	"account-hub/internal/idempotency"
 	"account-hub/internal/job"
+	"account-hub/internal/overview"
 	"account-hub/internal/platform/httpserver"
 	"account-hub/internal/platform/logging"
 	platformsqlite "account-hub/internal/platform/sqlite"
@@ -161,6 +162,7 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 		},
 	}
 	mux := http.NewServeMux()
+	mux.Handle("GET /api/v1/overview", authHandler.Require(http.HandlerFunc(overview.NewHandler(db).Get)))
 	mux.HandleFunc("POST /api/v1/auth/login", authHandler.Login)
 	mux.Handle("POST /api/v1/auth/logout", authHandler.RequireMutation(http.HandlerFunc(authHandler.Logout)))
 	mux.Handle("GET /api/v1/auth/session", authHandler.Require(http.HandlerFunc(authHandler.CurrentSession)))

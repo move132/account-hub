@@ -36,7 +36,7 @@ export function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   if (session)
-    return <Navigate to="/tokens" replace />;
+    return <Navigate to="/overview" replace />;
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (loading) return;
@@ -54,7 +54,7 @@ export function LoginPage() {
     try {
       await login(username, password);
       notify("登录成功");
-      navigate("/tokens");
+      navigate("/overview");
     }
     catch (reason) {
       notify("登录失败", errorMessage(reason), "danger");
