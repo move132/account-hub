@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
 import List from "lucide-react/dist/esm/icons/list.mjs";
-import ZoomIn from "lucide-react/dist/esm/icons/zoom-in.mjs";
 import { Badge, Button, Dialog, EmptyState, ImagePreview, Spinner, useToast } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { asRecord, flattenHistoryMedia, mergeHistoryItems, normalizeHistoryItems, type HistoryItem, type MediaItem } from "./media";
@@ -88,7 +87,7 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
       setAssetOffset(typeof page.next_offset === "number" ? page.next_offset : assetOffset + listCount);
       setHasMoreAssets(Boolean(page.has_more));
       setLoaded(true);
-      return { media: next.flatMap((item) => item.media), hasMore: Boolean(page.has_more) };
+      return { media: flattenHistoryMedia(next, { includeUploads: viewMode === "detail" }), hasMore: Boolean(page.has_more) };
     }
     catch (error) {
       notify("历史作品加载失败", errorMessage(error), "danger");
@@ -99,7 +98,7 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
       setLoading(false);
     }
   };
-  const previewImages = useMemo(() => media.filter((item) => item.type === "image"), [media]);
+  const previewImages = useMemo(() => flattenHistoryMedia(history, { includeUploads: viewMode === "detail" }).filter((item) => item.type === "image"), [history, viewMode]);
   const previewIndex = previewImageId ? previewImages.findIndex((item) => item.id === previewImageId) : -1;
   const previewImage = previewIndex >= 0 ? previewImages[previewIndex] : null;
   useEffect(() => {
@@ -145,7 +144,7 @@ export function DreaminaAssetsDialog({ open, onOpenChange, accountId, email, has
     }} title="历史作品" description={email} contentClassName={previewImage ? "hidden" : "w-[min(96vw,1200px)]"}>
       {!hasSessionId ? <EmptyState title="无 Session ID" description="该账号无法加载历史作品" /> : <>
         {previewImage ? <ImagePreview
-          image={{ url: previewImage.url, label: "即梦历史作品" }}
+          image={{ url: previewImage.url, label: previewImage.source === "uploaded" ? "即梦上传图片" : "即梦历史作品" }}
           index={previewIndex}
           total={previewImages.length}
           canPrevious={previewIndex > 0}
@@ -208,11 +207,12 @@ function HistoryDetailGrid({ items, onPreview, onCopyPrompt }: {
 }) {
   return <div className="grid items-start gap-3 lg:grid-cols-2">
     {items.map((item) => <article key={`${item.type}-${item.id}`} className="grid gap-3 rounded-lg border border-app-border bg-app-muted p-3">
-      {(item.modelName || item.resourceCount > 0) && <div className="flex flex-wrap gap-1">
+      {(item.modelName || item.resourceCount > 0) && <div className="flex flex-wrap items-center gap-2">
         {item.modelName && <Badge>
           {item.modelName}</Badge>}
         {item.resourceCount > 0 && <Badge tone="success">
           上传 {item.resourceCount} 张图片</Badge>}
+        {item.uploadedImages.map((media) => <MediaElement key={media.id} media={media} onPreview={onPreview} />)}
       </div>}
       <div className="flex items-start gap-2">
         <p title={item.prompt || undefined} className={`line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5 ${item.prompt ? "" : "text-app-subtle"}`}>
@@ -234,12 +234,17 @@ function MediaElement({ media, onPreview }: {
 }) {
   if (media.type === "video")
     return <video aria-label="即梦历史视频" src={media.url} controls preload="metadata" className="aspect-video w-full rounded-md bg-black object-contain" />;
-  return <Button type="button" variant="ghost" aria-label="放大查看图片" title="放大查看图片" className="group relative !h-auto aspect-video w-full overflow-hidden rounded-md border-0 !p-0" onClick={() => onPreview(media)}>
-    <img src={media.url} alt="即梦历史作品" width={640} height={360} loading="lazy" className="size-full object-cover transition-transform duration-200 group-hover:scale-[1.03]" />
-    <span className="pointer-events-none absolute bottom-2 right-2 grid size-7 place-items-center rounded-md bg-black/65 text-white shadow-sm">
-      <ZoomIn aria-hidden="true" className="size-4" />
-    </span>
-  </Button>;
+  const uploaded = media.source === "uploaded";
+  const label = uploaded ? "即梦上传图片" : "即梦历史作品";
+  const previewLabel = uploaded ? "放大查看上传图片" : "放大查看图片";
+  return <div role="button" tabIndex={0} aria-label={previewLabel} title={previewLabel} className={`group relative cursor-pointer opacity-80 hover:opacity-100 overflow-hidden rounded-md border-0 !p-0 ${uploaded ? "size-[25px] shrink-0 bg-app-surface" : "!h-auto aspect-video w-full"}`} onClick={() => onPreview(media)} onKeyDown={(event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onPreview(media);
+    }
+  }}>
+    <img src={media.url} alt={label} width={uploaded ? 25 : 640} height={uploaded ? 25 : 360} loading="lazy" className={`size-full transition-transform duration-200 group-hover:scale-[1.03] ${uploaded ? "object-contain" : "object-cover"}`} />
+  </div>;
 }
 
 async function fetchAssets(accountId: string, offset: number) {

@@ -1,10 +1,11 @@
-export interface MediaItem { id: string; type: "image" | "video"; url: string }
+export interface MediaItem { id: string; type: "image" | "video"; url: string; source: "generated" | "uploaded" }
 export interface HistoryItem {
   id: string
   type: "image" | "video"
   prompt: string
   modelName: string
   resourceCount: number
+  uploadedImages: MediaItem[]
   media: MediaItem[]
 }
 
@@ -31,31 +32,38 @@ export function normalizeHistoryItems(payload: Record<string, unknown>): History
         ? firstString(asRecordArray(nested.large_images), "image_url") || stringValue(nested.image_url) || stringValue(entry.image_url)
         : stringValue(asRecord(asRecord(nested.transcoded_video).origin).video_url) || stringValue(nested.video_url) || stringValue(entry.video_url)
       const safeSource = safeMediaURL(source)
-      if (safeSource) media.push({ id: `${kind}-${groupId}-${index}`, type: kind, url: safeSource })
+      if (safeSource) media.push({ id: `${kind}-${groupId}-${index}`, type: kind, url: safeSource, source: "generated" })
     })
     if (media.length === 0) return
     let resourceCount = 0
-    for (const rawResource of Array.isArray(container.resources) ? container.resources : []) {
+    const uploadedImages: MediaItem[] = []
+    const resources = Array.isArray(container.resources) ? container.resources : []
+    resources.forEach((rawResource, index) => {
       const resource = asRecord(rawResource)
       const imageInfo = asRecord(resource.image_info)
       const id = stringValue(imageInfo.image_uri) || identifier(resource.id, "")
-      const imageUrl = safeMediaURL(stringValue(imageInfo.image_url) || stringValue(resource.image_url))
+      const imageUrl = safeMediaURL(stringValue(imageInfo.image_url))
+        || safeMediaURL(firstString(asRecordArray(imageInfo.large_images), "image_url"))
+        || safeMediaURL(stringValue(resource.image_url))
+        || safeMediaURL(stringValue(imageInfo.image_uri))
       if (id || imageUrl) resourceCount += 1
-    }
+      if (imageUrl) uploadedImages.push({ id: `upload-${kind}-${groupId}-${index}`, type: "image", url: imageUrl, source: "uploaded" })
+    })
     history.push({
       id: groupId,
       type: kind,
       prompt: normalizePrompt(stringValue(container.history_group_key)),
       modelName: stringValue(asRecord(container.model_info).model_name),
       resourceCount,
+      uploadedImages,
       media,
     })
   })
   return history
 }
 
-export function flattenHistoryMedia(items: HistoryItem[]) {
-  return items.flatMap((item) => item.media)
+export function flattenHistoryMedia(items: HistoryItem[], { includeUploads = false }: { includeUploads?: boolean } = {}) {
+  return items.flatMap((item) => includeUploads ? [...item.uploadedImages, ...item.media] : item.media)
 }
 
 export function mergeHistoryItems(current: HistoryItem[], next: HistoryItem[]) {
