@@ -123,6 +123,7 @@ func (a *Application) Shutdown(ctx context.Context) error {
 			a.cancel()
 		}
 		a.lifecycleMu.Unlock()
+		a.runtimeLogs.Close()
 		go func() {
 			serverErr := a.server.Shutdown(ctx)
 			if serverErr != nil {

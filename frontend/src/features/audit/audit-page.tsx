@@ -50,7 +50,7 @@ export function AuditPage() {
     },
     {
       key: "target", header: "目标", render: (entry) => <div className="flex gap-1">
-        <Badge>{targetKindLabel(entry.target_kind)}</Badge>
+        <Badge tone="success">{targetKindLabel(entry.target_kind)}</Badge>
         <span className="mt-1 max-w-60 truncate font-mono text-xs text-app-subtle">
           {entry.target_id || ""}
         </span>

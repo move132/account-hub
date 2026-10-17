@@ -12,6 +12,7 @@ const DreaminaDetailPage = lazy(() => import("../features/dreamina/dreamina-deta
 const JobsPage = lazy(() => import("../features/jobs/jobs-page").then((module) => ({ default: module.JobsPage })));
 const SettingsPage = lazy(() => import("../features/settings/settings-page").then((module) => ({ default: module.SettingsPage })));
 const AuditPage = lazy(() => import("../features/audit/audit-page").then((module) => ({ default: module.AuditPage })));
+const RuntimeLogsPage = lazy(() => import("../features/runtime-logs/runtime-logs-page").then((module) => ({ default: module.RuntimeLogsPage })));
 function RequireAuth() {
   const { session, loading } = useAuth();
   if (loading)
@@ -36,6 +37,7 @@ export function App() {
           <Route path="/jobs" element={<JobsPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/audit-logs" element={<AuditPage />} />
+          <Route path="/runtime-logs" element={<RuntimeLogsPage />} />
           <Route path="/account/password" element={<PasswordPage />} />
         </Route>
       </Route>

@@ -7,6 +7,7 @@ import LogOut from "lucide-react/dist/esm/icons/log-out.mjs";
 import Menu from "lucide-react/dist/esm/icons/menu.mjs";
 import Moon from "lucide-react/dist/esm/icons/moon.mjs";
 import ScrollText from "lucide-react/dist/esm/icons/scroll-text.mjs";
+import SquareTerminal from "lucide-react/dist/esm/icons/square-terminal.mjs";
 import Settings from "lucide-react/dist/esm/icons/settings.mjs";
 import ShieldCheck from "lucide-react/dist/esm/icons/shield-check.mjs";
 import Sun from "lucide-react/dist/esm/icons/sun.mjs";
@@ -29,6 +30,7 @@ const navGroups = [
     items: [
       { to: "/jobs", label: "批量任务", icon: ListTodo },
       { to: "/audit-logs", label: "审计日志", icon: ScrollText },
+      { to: "/runtime-logs", label: "实时日志", icon: SquareTerminal },
       { to: "/settings", label: "系统设置", icon: Settings },
     ],
   },

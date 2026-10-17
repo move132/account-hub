@@ -10,6 +10,7 @@ Go + React 账号凭据管理后台。
 - 即梦账号管理、Session 刷新、积分查询/领取与历史作品
 - TXT/CSV 预检与批量导入、选中 Token 导出、启用 Session ZIP 导出、持久化批量任务和自动刷新
 - 精确 10 项系统设置、审计日志、健康检查
+- 实时运行日志，支持级别筛选、搜索、自动滚动和断线重连
 - Radix UI + Tailwind CSS 管理端，图标统一使用 Lucide React，支持暗色、亮色和跟随系统
 
 ChatGPT/Sora 的 Token 检查和刷新使用 `tls-client v1.16.0`，固定 Chrome 150 的 TLS/HTTP/2 指纹及对应请求头，HTTP/3 关闭。沿用系统设置中的 HTTP、HTTPS 或 SOCKS5 代理以及现有超时、重试规则。各账号逐次传入自己的凭据，不共享 Cookie Jar；即梦使用独立的标准 HTTP 客户端。
@@ -112,6 +113,14 @@ user@example.com,password-value,session-value,,enabled,
 ```
 
 即梦点击“导出启用 Session”会下载 ZIP：每 300 个启用且非空的 Session ID 生成一个范围命名的 TXT，并额外生成包含全部 Session 的 `session-all.txt`；文件内使用 `|` 分隔 Session ID。
+
+## 实时日志
+
+在“系统管理 → 实时日志”中查看 Go 服务的运行日志，包括 HTTP 请求、批量任务、账号刷新和上游请求异常。页面先显示最近记录，随后持续接收新日志；时间按北京时间显示。支持级别筛选、消息和字段搜索、自动滚动及清空当前视图。
+
+日志缓存在内存中，最多保留最近 1,000 条，并限制总大小和单条长度；服务重启后重新记录。断线后自动重连，缓存仍在的日志会继续补发，发生覆盖时页面会提示。“清空当前视图”只清理当前页面显示的记录。
+
+接口 `GET /api/v1/runtime-logs/stream` 使用 SSE，由管理员 Cookie 会话保护，并在连接期间定期检查登录有效性。网页日志中的密码、Token、Cookie、Authorization 等敏感字段会脱敏；原有终端日志继续输出。此功能采集后端应用日志，本地 Vite 和构建工具的输出由各自进程管理。
 
 ## API Key
 

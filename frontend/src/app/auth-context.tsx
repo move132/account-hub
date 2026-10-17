@@ -9,6 +9,7 @@ interface AuthValue {
   loading: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  invalidateSession: () => void;
 }
 const AuthContext = createContext<AuthValue | null>(null);
 export function AuthProvider({ children }: {
@@ -37,7 +38,8 @@ export function AuthProvider({ children }: {
     await api("/api/v1/auth/logout", { method: "POST", ...jsonBody({}) });
     setSession(null);
   }, []);
-  const value = useMemo(() => ({ session, loading, login, logout }), [session, loading, login, logout]);
+  const invalidateSession = useCallback(() => setSession(null), []);
+  const value = useMemo(() => ({ session, loading, login, logout, invalidateSession }), [session, loading, login, logout, invalidateSession]);
   return <AuthContext.Provider value={value}>
     {children}</AuthContext.Provider>;
 }

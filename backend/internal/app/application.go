@@ -16,8 +16,10 @@ import (
 	"account-hub/internal/idempotency"
 	"account-hub/internal/job"
 	"account-hub/internal/platform/httpserver"
+	"account-hub/internal/platform/logging"
 	platformsqlite "account-hub/internal/platform/sqlite"
 	"account-hub/internal/platform/upstream"
+	"account-hub/internal/runtimelog"
 	"account-hub/internal/scheduler"
 	"account-hub/internal/settings"
 	"account-hub/internal/token"
@@ -28,6 +30,7 @@ type Application struct {
 	config               Config
 	initialAdminPassword string
 	logger               *slog.Logger
+	runtimeLogs          *logging.Buffer
 	db                   *sql.DB
 	server               *http.Server
 	cancel               context.CancelFunc
@@ -47,6 +50,8 @@ type Application struct {
 }
 
 func New(ctx context.Context, config Config, logger *slog.Logger) (*Application, error) {
+	runtimeLogs := logging.NewBuffer()
+	logger = logging.WithBuffer(logger, runtimeLogs)
 	db, err := platformsqlite.Open(ctx, config.DatabasePath)
 	if err != nil {
 		return nil, err
@@ -125,6 +130,7 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	}).WithAudit(auditRepository)
 	settingHandler := settings.NewHandler(settingService, settings.NewMaintenance(db).WithAudit(auditRepository)).WithAPIKeys(apiKeyService)
 	auditHandler := audit.NewHandler(auditRepository)
+	runtimeLogHandler := runtimelog.NewHandler(runtimeLogs, authRepository)
 	idempotencyStore := idempotency.NewStore(db)
 	idempotencyMiddleware := idempotency.New(db)
 	mutation := func(handler http.Handler) http.Handler {
@@ -141,7 +147,7 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	}
 
 	application := &Application{
-		config: config, initialAdminPassword: initialAdminPassword, logger: logger,
+		config: config, initialAdminPassword: initialAdminPassword, logger: logger, runtimeLogs: runtimeLogs,
 		db: db, jobs: jobManager, scheduler: jobScheduler,
 		upstreams: []*upstream.Client{upstreamClient, tokenUpstreamClient},
 		runErrors: make(chan error, 1), shutdownDone: make(chan struct{}),
@@ -204,6 +210,7 @@ func New(ctx context.Context, config Config, logger *slog.Logger) (*Application,
 	mux.Handle("PATCH /api/v1/settings", authHandler.RequireMutation(http.HandlerFunc(settingHandler.Patch)))
 	mux.Handle("POST /api/v1/history-log-cleanups", authHandler.RequireMutation(http.HandlerFunc(settingHandler.CleanupHistory)))
 	mux.Handle("GET /api/v1/audit-logs", authHandler.Require(http.HandlerFunc(auditHandler.List)))
+	mux.Handle("GET /api/v1/runtime-logs/stream", authHandler.Require(http.HandlerFunc(runtimeLogHandler.Stream)))
 
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, r *http.Request) {
 		httpserver.Write(w, http.StatusOK, map[string]any{"status": "live"}, "服务正常")
