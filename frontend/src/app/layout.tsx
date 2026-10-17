@@ -16,13 +16,48 @@ import { useAuth } from "./auth-context";
 import { useTheme, type ThemeMode } from "./theme-provider";
 import { errorMessage } from "../lib/api";
 import { PasswordForm } from "../features/auth/password-page";
-const nav = [
-  { to: "/tokens", label: "GPT账号", icon: <Key aria-hidden="true" className="size-4" /> },
-  { to: "/dreamina", label: "即梦账号", icon: <UsersRound aria-hidden="true" className="size-4" /> },
-  { to: "/jobs", label: "批量任务", icon: <ListTodo aria-hidden="true" className="size-4" /> },
-  { to: "/settings", label: "系统设置", icon: <Settings aria-hidden="true" className="size-4" /> },
-  { to: "/audit-logs", label: "审计日志", icon: <ScrollText aria-hidden="true" className="size-4" /> },
+const navGroups = [
+  {
+    label: "账号管理",
+    items: [
+      { to: "/tokens", label: "GPT账号", icon: Key },
+      { to: "/dreamina", label: "即梦账号", icon: UsersRound },
+    ],
+  },
+  {
+    label: "系统管理",
+    items: [
+      { to: "/jobs", label: "批量任务", icon: ListTodo },
+      { to: "/audit-logs", label: "审计日志", icon: ScrollText },
+      { to: "/settings", label: "系统设置", icon: Settings },
+    ],
+  },
 ];
+
+function AppNavigation({ label, onNavigate }: { label: string; onNavigate?: () => void }) {
+  return <nav aria-label={label} className="space-y-7">
+    {navGroups.map((group) => <div key={group.label} role="group" aria-label={group.label}>
+      <p className="mb-2 px-3.5 text-xs font-semibold text-app-nav-foreground">{group.label}</p>
+      <div className="space-y-1">
+        {group.items.map(({ to, label: itemLabel, icon: Icon }) => <NavLink
+          key={to}
+          to={to}
+          onClick={onNavigate}
+          className={({ isActive }) => cn(
+            "group flex h-11 items-center gap-3 rounded-lg px-3.5 text-[14px] font-medium transition-colors",
+            isActive
+              ? "bg-app-nav-active text-app-nav-active-foreground"
+              : "text-app-nav-foreground hover:bg-app-nav-hover hover:text-app-foreground",
+          )}
+        >
+          <Icon aria-hidden="true" className="size-[18px] shrink-0" />
+          <span className="flex-1">{itemLabel}</span>
+          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-app-primary opacity-0 group-aria-[current=page]:opacity-100" />
+        </NavLink>)}
+      </div>
+    </div>)}
+  </nav>;
+}
 const themeIcons = {
   dark: <Sun aria-hidden="true" className="size-5" />,
   light: <Moon aria-hidden="true" className="size-5" />,
@@ -52,8 +87,8 @@ export function AppLayout() {
   ];
   return <div className="min-h-screen bg-app-background text-app-foreground">
     <a href="#main-content" className="fixed left-3 top-3 z-[120] -translate-y-20 rounded-lg bg-app-primary px-3 py-2 font-medium text-black focus:translate-y-0">跳到主内容</a>
-    <aside className="fixed inset-y-0 left-0 z-20 hidden w-56 flex-col border-r border-app-border bg-app-sidebar md:flex">
-      <div className="flex h-16 items-center justify-between gap-2 px-4">
+    <aside className="fixed inset-y-0 left-0 z-20 hidden w-60 flex-col border-r border-app-border bg-app-sidebar md:flex">
+      <div className="flex h-16 items-center justify-between gap-2 px-5">
         <div className="flex min-w-0 items-center gap-2.5">
           <span aria-hidden="true" className="grid size-8 shrink-0 place-items-center rounded-md bg-app-primary text-white">
             <ShieldCheck className="size-[17px]" strokeWidth={2.2} />
@@ -66,11 +101,9 @@ export function AppLayout() {
         <Button aria-label={themeLabel} title={themeLabel} size="sm" variant="ghost" className="size-9 px-0" onClick={toggleTheme}>
           {themeIcons[mode]}</Button>
       </div>
-      <nav aria-label="主导航" className="flex-1 space-y-0.5 px-2">
-        {nav.map((item) => <NavLink key={item.to} to={item.to} className={({ isActive }) => cn("flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm text-app-subtle transition-colors hover:bg-app-hover hover:text-app-foreground", isActive && "bg-app-muted text-app-foreground")}>
-          <span aria-hidden="true" className="grid size-5 place-items-center">
-            {item.icon}</span>
-          {item.label}</NavLink>)}</nav>
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-6 pt-5">
+        <AppNavigation label="主导航" />
+      </div>
       <div className="border-t border-app-border p-3">
         <div className="flex items-center justify-between rounded-md px-1 py-1">
           <div>
@@ -93,17 +126,13 @@ export function AppLayout() {
       </div>
     </header>
     <Dialog open={menuOpen} onOpenChange={setMenuOpen} title="导航">
-      <nav aria-label="移动端主导航" className="grid gap-2">
-        {nav.map((item) => <NavLink key={item.to} to={item.to} onClick={() => setMenuOpen(false)} className={({ isActive }) => cn("flex h-9 items-center gap-2.5 rounded-md px-2.5 text-sm text-app-subtle hover:bg-app-hover hover:text-app-foreground", isActive && "bg-app-muted text-app-foreground")}>
-          <span aria-hidden="true" className="grid size-5 place-items-center">
-            {item.icon}</span>
-          {item.label}</NavLink>)}</nav>
+      <AppNavigation label="移动端主导航" onNavigate={() => setMenuOpen(false)} />
     </Dialog>
     <Dialog open={passwordOpen} onOpenChange={setPasswordOpen} title="修改密码" description="修改后其他登录会话将失效">
       <PasswordForm onSaved={() => setPasswordOpen(false)} />
     </Dialog>
     <ConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} title="退出登录" description="确定要退出当前账号吗？" confirmLabel="确认退出" danger onConfirm={() => void onLogout()} />
-    <main id="main-content" className="min-h-screen px-4 py-5 md:ml-56 md:px-6 lg:px-8">
+    <main id="main-content" className="min-h-screen px-4 py-5 md:ml-60 md:px-6 lg:px-8">
       <div className="mx-auto max-w-[1440px]">
         <Outlet />
       </div>

@@ -1,12 +1,11 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
-import BadgeDollarSign from "lucide-react/dist/esm/icons/badge-dollar-sign.mjs";
 import CheckCircle from "lucide-react/dist/esm/icons/circle-check.mjs";
 import Images from "lucide-react/dist/esm/icons/images.mjs";
 import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
-import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea, TooltipText, cn, type Column, useToast, parsePageSize } from "../../components/ui";
+import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, IconButton, Input, PageHeader, Pagination, Select, Spinner, Textarea, TooltipText, cn, type Column, useToast, parsePageSize } from "../../components/ui";
 import { api, createRequestId, downloadApiFile, errorMessage, jsonBody, saveBlob } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel } from "../../lib/status-labels";
 import { formatTime, type DreaminaEditView, type DreaminaView } from "./types";
@@ -207,12 +206,9 @@ export function DreaminaPage() {
       </div>
     },
     {
-      key: "credit", header: "积分", className: "text-center", render: (item) => <TooltipText label={`积分：${item.credit_balance || ""}`}>
-        <span className="inline-flex size-8 items-center justify-center rounded-md text-app-subtle hover:bg-app-hover hover:text-app-foreground">
-          <BadgeDollarSign aria-hidden="true" className="size-4" />
-          <span className="sr-only">积分：{item.credit_balance || ""}</span>
-        </span>
-      </TooltipText>
+      key: "credit", header: "积分", className: "whitespace-nowrap text-center", render: (item) => <span className="font-medium tabular-nums">
+        {item.credit_balance?.trim() || "—"}
+      </span>
     },
     {
       key: "sessionTime", header: "时间", className: "whitespace-nowrap", render: (item) => <div className="grid gap-0.5 text-[11px] leading-4 text-app-subtle">
@@ -225,11 +221,11 @@ export function DreaminaPage() {
         {item.note || ""}</span>
     },
     {
-      key: "actions", header: "操作", className: "w-24 text-right", render: (item) => <div className="flex justify-end gap-1">
+      key: "actions", header: "操作", className: "w-24 text-center", render: (item) => <div className="flex items-center justify-center gap-1">
         <TooltipText label="历史作品">
-          <Button aria-label="历史作品" title="历史作品" size="sm" variant="ghost" className="size-8 px-0" disabled={!item.has_session_id} onClick={() => setAssetsAccount(item)}>
-            <Images aria-hidden="true" className="size-4" />
-          </Button>
+          <IconButton aria-label="历史作品" title="历史作品" disabled={!item.has_session_id} onClick={() => setAssetsAccount(item)}>
+            <Images aria-hidden="true" />
+          </IconButton>
         </TooltipText>
         <ActionMenu label="操作" items={[
           { label: "检查", icon: <CheckCircle aria-hidden="true" className="size-4" />, onSelect: () => action(item, "checks"), disabled: !item.has_session_id },
@@ -269,19 +265,19 @@ export function DreaminaPage() {
     <Dialog open={formOpen} onOpenChange={setFormOpen} title={editing ? "编辑即梦账号" : "新增即梦账号"} description="密码和 Session ID 在列表中仍以遮罩显示">
       <form className="grid gap-3" onSubmit={submit}>
         <Field label="邮箱">
-          <Input name="email" autoComplete="off" spellCheck={false} type="email" required value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+          <Input name="email" autoComplete="off" spellCheck={false} type="email" required placeholder="例如：name@example.com（必填）" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
         </Field>
         <Field label="密码">
-          <Input name="account-password" autoComplete="off" type={editing ? "text" : "password"} required={!editing} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
+          <Input name="account-password" autoComplete="off" type={editing ? "text" : "password"} required={!editing} placeholder={editing ? "留空则保留原密码" : "请输入即梦账号登录密码（必填）"} value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} />
         </Field>
         <Field label="Session ID">
-          <Textarea name="session-id" autoComplete="off" value={form.session_id} onChange={(event) => setForm({ ...form, session_id: event.target.value })} />
+          <Textarea name="session-id" autoComplete="off" placeholder={editing ? "留空则保留原 Session ID" : "请粘贴账号的 Session ID（可选）"} value={form.session_id} onChange={(event) => setForm({ ...form, session_id: event.target.value })} />
         </Field>
         <Field label="状态">
           <Select ariaLabel="即梦账号状态" value={form.status} onValueChange={(value) => setForm({ ...form, status: value })} options={[{ value: "enabled", label: "启用" }, { value: "disabled", label: "禁用" }]} />
         </Field>
         <Field label="备注">
-          <Textarea name="note" autoComplete="off" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+          <Textarea name="note" autoComplete="off" placeholder="请输入用途、来源等备注信息（可选）" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
         </Field>
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={() => setFormOpen(false)}>取消</Button>

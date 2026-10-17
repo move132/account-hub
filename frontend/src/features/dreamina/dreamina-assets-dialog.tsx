@@ -217,8 +217,8 @@ function HistoryDetailGrid({ items, onPreview, onCopyPrompt }: {
       <div className="flex items-start gap-2">
         <p title={item.prompt || undefined} className={`line-clamp-2 min-w-0 flex-1 whitespace-pre-wrap break-words text-sm leading-5 ${item.prompt ? "" : "text-app-subtle"}`}>
           {item.prompt || "无提示词"}</p>
-        {item.prompt && <Button type="button" size="sm" variant="ghost" aria-label="复制提示词" title="复制提示词" className="size-7 shrink-0 px-0" onClick={() => void onCopyPrompt(item.prompt)}>
-          <Copy aria-hidden="true" className="size-3.5" />
+        {item.prompt && <Button type="button" size="sm" variant="ghost" aria-label="复制提示词" title="复制提示词" className="shrink-0 px-0" onClick={() => void onCopyPrompt(item.prompt)}>
+          <Copy aria-hidden="true" className="size-3" />
         </Button>}
       </div>
       <div className={item.type === "image" ? "grid grid-cols-2 gap-2 sm:grid-cols-4" : "grid gap-2"}>

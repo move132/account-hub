@@ -1,7 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
-import { Badge, Button, Card, CardHeader, PageHeader, Spinner, useToast } from "../../components/ui";
+import { Badge, Button, Card, CardHeader, Dialog, PageHeader, Spinner, useToast } from "../../components/ui";
 import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel, operationLabel, resultStatusLabel } from "../../lib/status-labels";
 import { formatTime, type Attempt, type TokenView } from "./types";
@@ -56,7 +56,13 @@ export function TokenDetailPage() {
   if (!item)
     return <Card className="p-8">Token 不存在</Card>;
   return <>
-    {contentOpen ? <Suspense fallback={<Spinner label="加载账号内容" />}><TokenContentDialog key={id} tokenId={id} label={item.email || item.name || "未命名账号"} onClose={() => setContentOpen(false)} /></Suspense> : null}
+    {contentOpen ? <Suspense fallback={<Dialog open onOpenChange={(open) => { if (!open) setContentOpen(false); }} title="存储与聊天" description={item.email || item.name || "未命名账号"} contentClassName="w-[min(96vw,1200px)]">
+      <div role="status" className="grid min-h-48 place-items-center">
+        <Spinner label="加载账号内容" />
+      </div>
+    </Dialog>}>
+      <TokenContentDialog key={id} tokenId={id} label={item.email || item.name || "未命名账号"} onClose={() => setContentOpen(false)} />
+    </Suspense> : null}
     <PageHeader title={item.email || item.name || "Token 详情"} description={item.id} actions={<>
       <Button asChild>
         <Link to="/tokens">返回列表</Link>

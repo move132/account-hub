@@ -180,7 +180,7 @@ export function JobsPage() {
         {formatTime(job.created_at)}</span>
     },
     {
-      key: "actions", header: "操作", className: "w-12 text-right", render: (job) => <div className="flex justify-end">
+      key: "actions", header: "操作", className: "w-16 text-center", render: (job) => <div className="flex justify-center">
         <ActionMenu label="任务操作" items={[
           { label: "查看详情", icon: <Eye aria-hidden="true" className="size-4" />, onSelect: () => open(job) },
           { label: canDelete(job) ? "删除" : "删除（任务未结束）", icon: <Trash2 aria-hidden="true" className="size-4" />, onSelect: () => setDeleting(job), danger: true, disabled: !canDelete(job) },

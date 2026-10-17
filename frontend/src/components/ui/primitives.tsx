@@ -25,6 +25,21 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(({ className, v
   return <Component ref={ref} className={cn("inline-flex items-center justify-center gap-1.5 rounded-md border font-medium transition-colors outline-none disabled:pointer-events-none disabled:opacity-45", size === "sm" ? "h-7 px-2.5 text-xs" : "h-9 px-3.5 text-sm", variant === "primary" && "border-app-primary bg-app-primary text-white hover:bg-app-primary/90", variant === "secondary" && "border-app-border bg-app-surface hover:bg-app-hover", variant === "danger" && "border-app-danger/35 bg-app-danger/10 text-app-danger hover:bg-app-danger/20", variant === "ghost" && "border-transparent bg-transparent hover:bg-app-hover", className)} {...props} />;
 });
 Button.displayName = "Button";
+type IconButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
+  "aria-label": string;
+  tone?: "neutral" | "danger";
+};
+export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(({ className, tone = "neutral", type = "button", ...props }, ref) => <button
+  ref={ref}
+  type={type}
+  className={cn(
+    "inline-flex size-7 shrink-0 cursor-pointer items-center justify-center rounded-md border-0 bg-transparent p-0 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-app-ring/40 disabled:pointer-events-none disabled:opacity-45 [&>svg]:size-[13px] [&>svg]:shrink-0 [&>svg]:[stroke-width:1.75]",
+    tone === "danger" ? "text-app-danger hover:bg-app-danger/10 hover:text-app-danger" : "text-app-subtle hover:bg-app-hover hover:text-app-foreground",
+    className,
+  )}
+  {...props}
+/>);
+IconButton.displayName = "IconButton";
 export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} className={cn("h-8 w-full rounded-md border border-app-border bg-app-muted px-2 text-xs text-app-foreground outline-none placeholder:text-app-subtle focus:border-app-border focus:ring-0 disabled:opacity-50", className)} {...props} />);
 Input.displayName = "Input";
 export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => <textarea ref={ref} className={cn("min-h-16 w-full resize-y rounded-md border border-app-border bg-app-muted px-2 py-1.5 text-xs text-app-foreground outline-none placeholder:text-app-subtle focus:border-app-border focus:ring-0", className)} {...props} />);

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import Copy from "lucide-react/dist/esm/icons/copy.mjs";
 import Plus from "lucide-react/dist/esm/icons/plus.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
-import { Button, Card, CardHeader, DataTable, Dialog, Field, Input, Spinner, type Column, useToast } from "../../components/ui";
+import { Button, Card, CardHeader, DataTable, Dialog, Field, IconButton, Input, Spinner, type Column, useToast } from "../../components/ui";
 import { api, errorMessage, jsonBody } from "../../lib/api";
 import { copyText } from "../../lib/clipboard";
 
@@ -105,15 +105,15 @@ export function ApiKeySettings() {
     }
   };
 
-  const deleteButton = (item: APIKeyView) => <Button size="sm" variant="ghost" className="shrink-0 text-app-danger" aria-label={`删除“${item.name}”的 Key`} title="删除 Key" onClick={() => setDeleteTarget(item)}>
-    <Trash2 aria-hidden="true" className="size-3.5" /></Button>;
+  const deleteButton = (item: APIKeyView) => <IconButton tone="danger" aria-label={`删除“${item.name}”的 Key`} title="删除 Key" onClick={() => setDeleteTarget(item)}>
+    <Trash2 aria-hidden="true" /></IconButton>;
 
   const columns: Array<Column<APIKeyView>> = [
     { key: "name", header: "名称", className: "max-w-[300px]", render: (item) => <span className="line-clamp-2 max-w-[300px] break-words font-medium" title={item.name}>{item.name}</span> },
     { key: "key", header: "Key", render: (item) => <code className="whitespace-nowrap text-xs text-app-subtle">{item.key_masked}</code> },
     { key: "created_at", header: "创建时间", render: (item) => <span className="whitespace-nowrap text-xs text-app-subtle">{timeFormatter.format(item.created_at)}</span> },
     { key: "last_used_at", header: "最近使用时间", render: (item) => <span className="whitespace-nowrap text-xs text-app-subtle">{item.last_used_at == null ? "未使用" : timeFormatter.format(item.last_used_at)}</span> },
-    { key: "actions", header: "操作", className: "w-16", render: deleteButton },
+    { key: "actions", header: "操作", className: "w-16 text-center", render: deleteButton },
   ];
 
   return <>

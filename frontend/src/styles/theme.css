@@ -4,7 +4,11 @@
 
 :root {
   --background: #f5f6f7;
-  --sidebar: #ffffff;
+  --sidebar: #f7f9fc;
+  --navigation-foreground: #64748b;
+  --navigation-hover: #edf2f6;
+  --navigation-active: #e7f3ef;
+  --navigation-active-foreground: #008363;
   --surface: #ffffff;
   --surface-muted: #f0f1f2;
   --surface-hover: #e8eaec;
@@ -24,6 +28,10 @@
 .dark {
   --background: #070807;
   --sidebar: #0b0c0b;
+  --navigation-foreground: #96a69d;
+  --navigation-hover: #17221c;
+  --navigation-active: #143329;
+  --navigation-active-foreground: #50e2b3;
   --surface: #121312;
   --surface-muted: #171817;
   --surface-hover: #1e201f;
@@ -55,6 +63,10 @@
   --text-2xl--line-height: 1.625rem;
   --color-app-background: var(--background);
   --color-app-sidebar: var(--sidebar);
+  --color-app-nav-foreground: var(--navigation-foreground);
+  --color-app-nav-hover: var(--navigation-hover);
+  --color-app-nav-active: var(--navigation-active);
+  --color-app-nav-active-foreground: var(--navigation-active-foreground);
   --color-app-surface: var(--surface);
   --color-app-muted: var(--surface-muted);
   --color-app-hover: var(--surface-hover);

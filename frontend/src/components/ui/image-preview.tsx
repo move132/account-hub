@@ -45,8 +45,8 @@ export function ImagePreview({
         <RadixDialog.Title className="sr-only">图片预览</RadixDialog.Title>
         {onClose ? <Button type="button" size="sm" variant="ghost" aria-label="关闭图片预览" title="关闭图片预览" onClick={onClose} className={`fixed right-4 top-4 size-9 rounded-full p-0 shadow-lg ${iconButtonClass}`}>
           <X aria-hidden="true" className="size-4" /></Button> : null}
-        <div className="relative grid min-h-64 w-fit max-w-full place-items-center">
-          {loading ? <Spinner label="加载图片" /> : error ? <p role="alert" className="p-4 text-center text-sm text-white">{error}</p> : image ? <img src={image.url} alt={image.label} width={1920} height={1080} className="max-h-[72vh] max-w-full object-contain" /> : null}
+        <div className="relative grid min-h-64 w-full max-w-full place-items-center">
+          {loading ? <Spinner label="加载图片" /> : error ? <p role="alert" className="w-full break-words px-16 py-4 text-center text-sm text-white">{error}</p> : image ? <img src={image.url} alt={image.label} width={1920} height={1080} className="max-h-[72vh] max-w-full object-contain" /> : null}
           {total > 1 || onPrevious ? <Button type="button" size="sm" variant="ghost" aria-label="上一张" title="上一张" disabled={!hasPrevious || !onPrevious} onClick={onPrevious} className={cn(`absolute left-3 top-1/2 size-9 -translate-y-1/2 rounded-full p-0 shadow-lg ${iconButtonClass}`, !hasPrevious && "opacity-45")}>
             <ChevronLeft aria-hidden="true" className="size-5" /></Button> : null}
           {total > 1 || onNext ? <Button type="button" size="sm" variant="ghost" aria-label="下一张" title={nextLoading ? "加载中" : "下一张"} disabled={!hasNext || !onNext || nextLoading} onClick={onNext} className={cn(`absolute right-3 top-1/2 size-9 -translate-y-1/2 rounded-full p-0 shadow-lg ${iconButtonClass}`, (!hasNext || nextLoading) && "opacity-45")}>

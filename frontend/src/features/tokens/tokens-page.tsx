@@ -5,7 +5,7 @@ import Pencil from "lucide-react/dist/esm/icons/pencil.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import Trash2 from "lucide-react/dist/esm/icons/trash-2.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
-import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, Input, PageHeader, Pagination, Select, Spinner, Textarea, cn, type Column, useToast, parsePageSize } from "../../components/ui";
+import { ActionMenu, Badge, Button, Card, ConfirmDialog, DataTable, Dialog, Field, IconButton, Input, PageHeader, Pagination, Select, Spinner, Textarea, cn, type Column, useToast, parsePageSize } from "../../components/ui";
 import { api, createRequestId, downloadApiFile, errorMessage, jsonBody, saveBlob } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel } from "../../lib/status-labels";
 import { formatTime, type TokenEditView, type TokenView } from "./types";
@@ -218,8 +218,8 @@ export function TokensPage() {
         {formatTime(item.updated_at)}</span>
     },
     {
-      key: "actions", header: "操作", className: "w-24 text-right", render: (item) => <div className="flex items-center justify-end gap-1">
-        <Button size="sm" variant="ghost" className="size-8 shrink-0 px-0" aria-label="存储与聊天" title="存储与聊天" onClick={() => setContent(item)}><HardDrive aria-hidden="true" className="size-4" /></Button>
+      key: "actions", header: "操作", className: "w-24 text-center", render: (item) => <div className="flex items-center justify-center gap-1">
+        <IconButton aria-label="存储与聊天" title="存储与聊天" onClick={() => setContent(item)}><HardDrive aria-hidden="true" /></IconButton>
         <ActionMenu label="操作" items={[
           { label: "检查", icon: <CheckCircle aria-hidden="true" className="size-4" />, onSelect: () => action(item, "checks") },
           { label: "刷新", icon: <RefreshCw aria-hidden="true" className="size-4" />, onSelect: () => action(item, "refreshes"), disabled: !item.has_session_token },
@@ -235,7 +235,13 @@ export function TokensPage() {
         if (id) setImportJob({ id, skipped });
       }} />
     </Suspense> : null}
-    {content ? <Suspense fallback={<Spinner label="加载账号内容" />}><TokenContentDialog key={content.id} tokenId={content.id} label={content.email || content.name || "未命名账号"} onClose={() => setContent(null)} /></Suspense> : null}
+    {content ? <Suspense fallback={<Dialog open onOpenChange={(open) => { if (!open) setContent(null); }} title="存储与聊天" description={content.email || content.name || "未命名账号"} contentClassName="w-[min(96vw,1200px)]">
+      <div role="status" className="grid min-h-48 place-items-center">
+        <Spinner label="加载账号内容" />
+      </div>
+    </Dialog>}>
+      <TokenContentDialog key={content.id} tokenId={content.id} label={content.email || content.name || "未命名账号"} onClose={() => setContent(null)} />
+    </Suspense> : null}
     <PageHeader title="GPT账号" description={`共 ${total} 个账号凭据`} actions={<>
       <Button onClick={() => setImportOpen(true)}>批量导入</Button>
       <Button disabled={selected.size === 0 || exporting} onClick={() => void exportSelected()}>{exporting ? "导出中…" : "导出选中"}</Button>
@@ -264,23 +270,23 @@ export function TokensPage() {
       <form className="grid gap-3" onSubmit={submit}>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label="名称">
-            <Input name="name" autoComplete="off" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
+            <Input name="name" autoComplete="off" placeholder="请输入账号名称（可选）" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} />
           </Field>
           <Field label="邮箱">
-            <Input name="email" autoComplete="off" spellCheck={false} type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
+            <Input name="email" autoComplete="off" spellCheck={false} type="email" placeholder="例如：name@example.com（可选）" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} />
           </Field>
         </div>
         <Field label="Access Token">
-          <Textarea name="access-token" autoComplete="off" required={!editing} value={form.access_token} onChange={(event) => setForm({ ...form, access_token: event.target.value })} />
+          <Textarea name="access-token" autoComplete="off" required={!editing} placeholder={editing ? "留空则保留原 Access Token" : "请粘贴完整的 Access Token（必填）"} value={form.access_token} onChange={(event) => setForm({ ...form, access_token: event.target.value })} />
         </Field>
         <Field label="Session Token">
-          <Textarea name="session-token" autoComplete="off" value={form.session_token} onChange={(event) => setForm({ ...form, session_token: event.target.value })} />
+          <Textarea name="session-token" autoComplete="off" placeholder={editing ? "留空则保留原 Session Token" : "请粘贴 Session Token（可选，用于刷新 Access Token）"} value={form.session_token} onChange={(event) => setForm({ ...form, session_token: event.target.value })} />
         </Field>
         <Field label="状态">
           <Select ariaLabel="Token 状态" value={form.status} onValueChange={(value) => setForm({ ...form, status: value })} options={[{ value: "enabled", label: "启用" }, { value: "disabled", label: "禁用" }]} />
         </Field>
         <Field label="标注">
-          <Textarea name="note" autoComplete="off" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
+          <Textarea name="note" autoComplete="off" placeholder="请输入用途、来源等标注信息（可选）" value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} />
         </Field>
         <div className="flex justify-end gap-2">
           <Button type="button" onClick={() => setFormOpen(false)}>取消</Button>
