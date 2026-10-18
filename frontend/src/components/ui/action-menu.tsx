@@ -16,7 +16,7 @@ export function ActionMenu({ label, items, side = "bottom" }: {
 }) {
   return <RadixDropdownMenu.Root modal={false}>
     <RadixDropdownMenu.Trigger asChild>
-      <IconButton aria-label={label} title={label} className="data-[state=open]:bg-app-hover data-[state=open]:text-app-foreground">
+      <IconButton aria-label={label} title={label} className="hover:!bg-app-nav-active hover:!text-app-nav-active-foreground data-[state=open]:bg-app-nav-active data-[state=open]:text-app-nav-active-foreground">
         <Ellipsis aria-hidden="true" />
       </IconButton>
     </RadixDropdownMenu.Trigger>
@@ -28,7 +28,7 @@ export function ActionMenu({ label, items, side = "bottom" }: {
             "flex h-7 cursor-pointer select-none items-center gap-2 whitespace-nowrap rounded px-2.5 text-[12px] leading-none outline-none transition-colors data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&_svg]:size-[13px] [&_svg]:shrink-0 [&_svg]:[stroke-width:1.75]",
             item.danger
               ? "text-app-danger data-[highlighted]:bg-app-danger/8"
-              : "text-app-foreground [&_svg]:text-app-subtle data-[highlighted]:bg-app-hover data-[highlighted]:[&_svg]:text-app-foreground",
+              : "text-app-foreground [&_svg]:text-app-subtle data-[highlighted]:bg-app-nav-active data-[highlighted]:text-app-nav-active-foreground data-[highlighted]:[&_svg]:text-app-nav-active-foreground",
           )}>
             {item.icon}<span>{item.label}</span>
           </RadixDropdownMenu.Item>

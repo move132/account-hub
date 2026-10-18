@@ -134,19 +134,19 @@ export function TrendChart({ samples, provider }: { samples: Snapshot[]; provide
   };
   const latest = points[points.length - 1];
   return <div>
-    <div className="mb-2 flex flex-wrap items-center gap-5 text-xs text-app-subtle">
-      {series.map((item) => <span key={item.key} className="inline-flex items-center gap-2"><span aria-hidden="true" className={`h-0.5 w-4 rounded-full ${item.className}`} />{item.label}</span>)}
-    </div>
     <div className="relative">
-      <canvas ref={canvas} role="img" aria-label={`${provider === "tokens" ? "GPT" : "即梦"}账号实时数量折线图`} aria-describedby={descriptionId} tabIndex={0} className="block h-60 w-full rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-app-ring/40 sm:h-72" onPointerMove={move} onPointerLeave={() => { if (document.activeElement !== canvas.current) setActive(null); }} onFocus={() => setActive(points.length ? points.length - 1 : null)} onBlur={() => setActive(null)} onKeyDown={keyDown} />
+      <canvas ref={canvas} role="img" aria-label={`${provider === "tokens" ? "GPT" : "即梦"}账号实时数量折线图`} aria-describedby={descriptionId} tabIndex={0} className="block h-44 w-full rounded-md outline-none focus-visible:ring-2 focus-visible:ring-app-ring/40 sm:h-52" onPointerMove={move} onPointerLeave={() => { if (document.activeElement !== canvas.current) setActive(null); }} onFocus={() => setActive(points.length ? points.length - 1 : null)} onBlur={() => setActive(null)} onKeyDown={keyDown} />
       {selected && <div role="status" className="pointer-events-none absolute top-2 z-10 w-44 rounded-lg border border-app-border bg-app-surface/95 p-3 text-xs shadow-lg backdrop-blur" style={{ left: Math.max(0, Math.min(size.width - 176, x(selected.at) + (x(selected.at) > size.width / 2 ? -190 : 14))) }}>
         <p className="mb-2 text-[11px] text-app-subtle">{timestampFormatter.format(selected.at)}</p>
         {series.map((item) => <div key={item.key} className="mt-1.5 flex items-center justify-between gap-3"><span className="inline-flex items-center gap-1.5 text-app-subtle"><span aria-hidden="true" className={`size-1.5 rounded-full ${item.className}`} />{item.label}</span><strong className="font-semibold tabular-nums">{selected[item.key].toLocaleString("zh-CN")}</strong></div>)}
       </div>}
     </div>
     <p id={descriptionId} className="sr-only">{latest ? `最近记录：${timestampFormatter.format(latest.at)}，总数 ${latest.total}，启用 ${latest.enabled}，禁用 ${latest.disabled}。` : "暂无记录。"}可使用左右方向键查看记录，Home 和 End 跳到首尾记录。</p>
-    <div className="mt-2 flex flex-wrap items-center justify-between gap-2 text-[11px] text-app-subtle">
-      <span>北京时间</span><span>{points.length > 1 ? `当前显示自 ${timestampFormatter.format(points[0].at)}` : "首个记录点，下一次更新后形成折线"}</span>
+    <div className="mt-1.5 flex flex-wrap items-center justify-between gap-x-3 gap-y-1.5 text-[10px] leading-4 text-app-subtle">
+      <div className="flex flex-wrap items-center gap-3">
+        {series.map((item) => <span key={item.key} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className={`h-0.5 w-3 rounded-full ${item.className}`} />{item.label}</span>)}
+      </div>
+      <span>北京时间 · {points.length > 1 ? `当前显示自 ${timestampFormatter.format(points[0].at)}` : "首个记录点，下一次更新后形成折线"}</span>
     </div>
   </div>;
 }

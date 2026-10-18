@@ -35,10 +35,10 @@ export function RuntimeLogsPage() {
 
   return <>
     <PageHeader title="实时日志" description="查看服务运行情况、任务执行和请求异常" actions={<>
-      <Button size="sm" onClick={reconnect}>
+      <Button onClick={reconnect}>
         <RotateCw aria-hidden="true" className="size-3.5" />重新连接
       </Button>
-      <Button size="sm" onClick={clear} disabled={items.length === 0}>
+      <Button onClick={clear} disabled={items.length === 0}>
         <Eraser aria-hidden="true" className="size-3.5" />清空当前视图
       </Button>
     </>} />

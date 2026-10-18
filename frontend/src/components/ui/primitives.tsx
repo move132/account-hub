@@ -40,11 +40,11 @@ export const IconButton = forwardRef<HTMLButtonElement, IconButtonProps>(({ clas
   {...props}
 />);
 IconButton.displayName = "IconButton";
-export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} className={cn("h-8 w-full rounded-md border border-app-border bg-app-muted px-2 text-xs text-app-foreground outline-none placeholder:text-app-subtle focus:border-app-border focus:ring-0 disabled:opacity-50", className)} {...props} />);
+export const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} className={cn("h-8 w-full rounded-md border border-app-border bg-app-surface px-2 text-xs text-app-foreground outline-none transition-colors placeholder:text-app-subtle focus:border-app-primary focus:ring-0 focus-visible:!outline-none disabled:opacity-50", className)} {...props} />);
 Input.displayName = "Input";
-export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => <textarea ref={ref} className={cn("min-h-16 w-full resize-y rounded-md border border-app-border bg-app-muted px-2 py-1.5 text-xs text-app-foreground outline-none placeholder:text-app-subtle focus:border-app-border focus:ring-0", className)} {...props} />);
+export const Textarea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<HTMLTextAreaElement>>(({ className, ...props }, ref) => <textarea ref={ref} className={cn("min-h-16 w-full resize-y rounded-md border border-app-border bg-app-surface px-2 py-1.5 text-xs text-app-foreground outline-none transition-colors placeholder:text-app-subtle focus:border-app-primary focus:ring-0 focus-visible:!outline-none", className)} {...props} />);
 Textarea.displayName = "Textarea";
-export const FileInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} type="file" className={cn("block w-full rounded-md border border-app-border bg-app-muted p-1 text-xs text-app-subtle file:mr-2 file:rounded file:border-0 file:bg-app-hover file:px-2 file:py-0.5 file:text-app-foreground", className)} {...props} />);
+export const FileInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(({ className, ...props }, ref) => <input ref={ref} type="file" className={cn("block w-full rounded-md border border-app-border bg-app-surface p-1 text-xs text-app-subtle outline-none transition-colors file:mr-2 file:rounded file:border file:border-app-border file:bg-app-surface file:px-2 file:py-0.5 file:text-app-foreground focus:border-app-primary focus-visible:!outline-none file:hover:bg-app-nav-active file:hover:text-app-nav-active-foreground", className)} {...props} />);
 FileInput.displayName = "FileInput";
 export function Field({ label, children, hint }: {
   label: ReactNode;
@@ -99,7 +99,7 @@ export function Select({ value, onValueChange, options, placeholder, ariaLabel =
   ariaLabel?: string;
 }) {
   return <RadixSelect.Root value={value} onValueChange={onValueChange}>
-    <RadixSelect.Trigger aria-label={ariaLabel} className="inline-flex h-8 min-w-28 items-center justify-between gap-2 rounded-md border border-app-border bg-app-muted px-2 text-xs outline-none focus:ring-0">
+    <RadixSelect.Trigger aria-label={ariaLabel} className="inline-flex h-8 min-w-28 items-center justify-between gap-2 rounded-md border border-app-border bg-app-surface px-2 text-xs outline-none transition-colors hover:bg-app-nav-active hover:text-app-nav-active-foreground focus:border-app-primary focus:ring-0 focus-visible:!outline-none data-[state=open]:border-app-primary">
       <RadixSelect.Value placeholder={placeholder} />
       <RadixSelect.Icon>
         <ChevronDownIcon />
@@ -108,7 +108,7 @@ export function Select({ value, onValueChange, options, placeholder, ariaLabel =
     <RadixSelect.Portal>
       <RadixSelect.Content position="popper" sideOffset={6} className="z-50 overflow-hidden rounded-lg border border-app-border bg-app-surface p-1 shadow-xl">
         <RadixSelect.Viewport>
-          {options.map((option) => <RadixSelect.Item key={option.value} value={option.value} className="relative flex h-7 min-w-32 cursor-default select-none items-center rounded-md pl-7 pr-2.5 text-xs outline-none data-[highlighted]:bg-app-hover">
+          {options.map((option) => <RadixSelect.Item key={option.value} value={option.value} className="relative flex h-7 min-w-32 cursor-pointer select-none items-center rounded-md pl-7 pr-2.5 text-xs outline-none data-[state=checked]:bg-app-nav-active data-[state=checked]:text-app-nav-active-foreground data-[highlighted]:bg-app-nav-active data-[highlighted]:text-app-nav-active-foreground">
             <RadixSelect.ItemIndicator className="absolute left-2">
               <CheckIcon />
             </RadixSelect.ItemIndicator>

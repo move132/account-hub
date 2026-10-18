@@ -136,7 +136,7 @@ export function AppLayout() {
       <PasswordForm onSaved={() => setPasswordOpen(false)} />
     </Dialog>
     <ConfirmDialog open={logoutConfirmOpen} onOpenChange={setLogoutConfirmOpen} title="退出登录" description="确定要退出当前账号吗？" confirmLabel="确认退出" danger onConfirm={() => void onLogout()} />
-    <main id="main-content" className="min-h-screen px-4 py-5 md:ml-60 md:px-6 lg:px-8">
+    <main id="main-content" className="min-h-screen bg-app-surface px-4 py-5 md:ml-60 md:px-6 lg:px-8 dark:bg-app-background">
       <div className="mx-auto max-w-[1440px]">
         <Outlet />
       </div>

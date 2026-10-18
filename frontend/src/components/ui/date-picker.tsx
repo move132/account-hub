@@ -117,11 +117,11 @@ function CalendarPanel({ selected, min, max, onSelect, footer }: { selected: str
   return (
     <div className="w-[min(18.25rem,calc(100vw-1.5rem))] p-3 sm:w-[268px] sm:p-2.5">
       <div className="mb-2 flex items-center justify-between">
-        <button type="button" className="grid size-8 place-items-center rounded-md text-app-subtle hover:bg-app-hover hover:text-app-foreground disabled:opacity-30 sm:size-7" disabled={previousDisabled} onClick={() => setMonth(new Date(year, monthIndex - 1, 1))} aria-label="上个月">
+        <button type="button" className="grid size-8 place-items-center rounded-md text-app-subtle hover:bg-app-nav-active hover:text-app-nav-active-foreground disabled:opacity-30 sm:size-7" disabled={previousDisabled} onClick={() => setMonth(new Date(year, monthIndex - 1, 1))} aria-label="上个月">
           <ChevronLeft aria-hidden="true" size={14} />
         </button>
         <strong aria-live="polite" className="text-xs font-medium text-app-foreground">{year} 年 {monthIndex + 1} 月</strong>
-        <button type="button" className="grid size-8 place-items-center rounded-md text-app-subtle hover:bg-app-hover hover:text-app-foreground disabled:opacity-30 sm:size-7" disabled={nextDisabled} onClick={() => setMonth(new Date(year, monthIndex + 1, 1))} aria-label="下个月">
+        <button type="button" className="grid size-8 place-items-center rounded-md text-app-subtle hover:bg-app-nav-active hover:text-app-nav-active-foreground disabled:opacity-30 sm:size-7" disabled={nextDisabled} onClick={() => setMonth(new Date(year, monthIndex + 1, 1))} aria-label="下个月">
           <ChevronRight aria-hidden="true" size={14} />
         </button>
       </div>
@@ -151,7 +151,7 @@ function CalendarPanel({ selected, min, max, onSelect, footer }: { selected: str
               className={cn(
                 "grid h-9 w-full min-w-0 place-items-center rounded-md text-xs outline-none focus-visible:ring-1 focus-visible:ring-app-primary disabled:pointer-events-none disabled:opacity-25 sm:h-8",
                 isToday && !isSelected && "border border-app-primary/50",
-                isSelected ? "bg-app-primary font-semibold text-white hover:bg-app-primary-hover" : "hover:bg-app-hover focus-visible:bg-app-hover",
+                isSelected ? "bg-app-nav-active font-semibold text-app-nav-active-foreground" : "hover:bg-app-nav-active hover:text-app-nav-active-foreground focus-visible:bg-app-nav-active focus-visible:text-app-nav-active-foreground",
                 !isSelected && (isToday ? "text-app-primary" : "text-app-foreground"),
               )}
             >
@@ -171,7 +171,7 @@ const DateTrigger = forwardRef<HTMLButtonElement, Omit<DateControlProps, "onValu
       ref={ref}
       type="button"
       className={cn(
-        "flex h-8 w-full min-w-0 items-center gap-2 rounded-md border border-app-border bg-app-muted px-2 text-left text-xs transition-colors hover:bg-app-hover focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-app-primary",
+        "flex h-8 w-full min-w-0 items-center gap-2 rounded-md border border-app-border bg-app-surface px-2 text-left text-xs transition-colors hover:bg-app-nav-active hover:text-app-nav-active-foreground focus:border-app-primary focus-visible:!outline-none disabled:cursor-not-allowed disabled:opacity-50 data-[state=open]:border-app-primary",
         value ? "text-app-foreground" : "text-app-subtle",
         className,
       )}
@@ -214,7 +214,7 @@ export const DatePicker = forwardRef<HTMLButtonElement, DateControlProps>(functi
               onValueChange(nextValue);
               setOpen(false);
             }}
-            footer={value && !required ? <div className="mt-2 border-t border-app-border pt-2"><button type="button" className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-app-subtle hover:bg-app-hover hover:text-app-foreground sm:h-7" onClick={() => { onValueChange(""); setOpen(false); }}><X aria-hidden="true" size={12} />清除日期</button></div> : undefined}
+            footer={value && !required ? <div className="mt-2 border-t border-app-border pt-2"><button type="button" className="flex h-8 items-center gap-1.5 rounded-md px-2 text-xs text-app-subtle hover:bg-app-nav-active hover:text-app-nav-active-foreground sm:h-7" onClick={() => { onValueChange(""); setOpen(false); }}><X aria-hidden="true" size={12} />清除日期</button></div> : undefined}
           />
         </PopoverPrimitive.Content>
       </PopoverPrimitive.Portal>
@@ -260,12 +260,12 @@ function TimeColumn({ label, unit, values, value, onValueChange }: {
   return <div className="min-w-0">
     <p className="mb-1.5 text-center text-xs text-app-subtle">{label}</p>
     <div ref={viewport} role="listbox" aria-label={label} aria-orientation="vertical" data-time-unit={unit}
-      className="relative flex h-44 flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-md border border-app-border bg-app-muted p-1">
+      className="relative flex h-44 flex-col gap-0.5 overflow-y-auto overscroll-contain rounded-md border border-app-border bg-app-surface p-1">
       {values.map((part) => <button key={part} ref={part === value ? selected : undefined} type="button" role="option"
         aria-label={`${part}${unit === "hour" ? "时" : "分"}`} aria-selected={part === value} tabIndex={part === value ? 0 : -1}
         data-time-value={part} onClick={() => onValueChange(part)} onKeyDown={(event) => moveSelection(event, part)}
         className={cn("h-8 w-full shrink-0 rounded text-sm tabular-nums outline-none focus-visible:ring-1 focus-visible:ring-app-primary",
-          part === value ? "bg-app-primary font-semibold text-white dark:text-black" : "text-app-foreground hover:bg-app-hover")}>
+          part === value ? "bg-app-nav-active font-semibold text-app-nav-active-foreground" : "text-app-foreground hover:bg-app-nav-active hover:text-app-nav-active-foreground")}>
         {part}
       </button>)}
     </div>
@@ -295,7 +295,7 @@ function TimePanel({ value, required, onCommit, onClear }: {
       <TimeColumn label="分钟" unit="minute" values={twoDigitValues} value={minute} onValueChange={setMinute} />
     </div>
     <div className="mt-2 flex items-center justify-between gap-2 border-t border-app-border pt-2">
-      {value && !required ? <Button type="button" size="sm" variant="ghost" onClick={onClear} className="text-app-subtle">
+      {value && !required ? <Button type="button" size="sm" variant="ghost" onClick={onClear} className="text-app-subtle hover:!bg-app-nav-active hover:!text-app-nav-active-foreground">
         <X aria-hidden="true" className="size-3" />清除时间
       </Button> : <span />}
       <Button type="button" size="sm" variant="primary" onClick={commit}>确定</Button>

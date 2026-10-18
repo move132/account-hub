@@ -125,7 +125,7 @@ export function SettingsPage() {
       <Spinner />
     </div>;
   return <>
-    <PageHeader title="系统设置" description="管理 API Key、账号刷新、网络代理与历史日志" actions={<Button size="sm" variant="primary" disabled={!dirty.size || saving} onClick={() => void save()}>
+    <PageHeader title="系统设置" description="管理 API Key、账号刷新、网络代理与历史日志" actions={<Button variant="primary" disabled={!dirty.size || saving} onClick={() => void save()}>
       {saving ? "保存中…" : `保存设置${dirty.size ? ` (${dirty.size})` : ""}`}</Button>} />
     <div className="grid gap-3 lg:grid-cols-2">
       <div className="min-w-0 lg:col-span-2"><ApiKeySettings /></div>

@@ -5,7 +5,7 @@ import KeyRound from "lucide-react/dist/esm/icons/key-round.mjs";
 import RefreshCw from "lucide-react/dist/esm/icons/refresh-cw.mjs";
 import UsersRound from "lucide-react/dist/esm/icons/users-round.mjs";
 import Activity from "lucide-react/dist/esm/icons/activity.mjs";
-import { Button, Card, PageHeader, Spinner, cn } from "../../components/ui";
+import { Button, Card, Spinner, cn } from "../../components/ui";
 import { api, errorMessage } from "../../lib/api";
 import { UPDATE_INTERVAL, appendSample, type Counts, type OverviewData, type Provider, type Snapshot } from "./trend";
 import { TrendChart } from "./trend-chart";
@@ -22,19 +22,18 @@ function ProviderSummary({ provider, summary }: { provider: Provider; summary: C
     { key: "enabled", label: "启用", to: `/${provider}?status=enabled` },
     { key: "disabled", label: "禁用", to: `/${provider}?status=disabled` },
   ] as const;
-  return <Card className="relative overflow-hidden !rounded-xl shadow-sm shadow-black/[0.025]">
-    <div aria-hidden="true" className={cn("pointer-events-none absolute -right-12 -top-16 size-44 rounded-full blur-3xl", provider === "tokens" ? "bg-app-primary/[0.06]" : "bg-app-info/[0.06]")} />
-    <div className="relative flex items-center justify-between gap-3 px-5 pb-4 pt-5 sm:px-6">
-      <div className="flex items-center gap-3">
-        <span className={cn("grid size-10 place-items-center rounded-xl", provider === "tokens" ? "bg-app-primary/10 text-app-primary" : "bg-app-info/10 text-app-info")}><Icon aria-hidden="true" className="size-5" strokeWidth={1.7} /></span>
-        <h2 className="text-base font-semibold">{title}</h2>
+  return <Card className="overflow-hidden">
+    <div className="flex items-center justify-between gap-2 px-3 py-2.5">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className={cn("grid size-7 shrink-0 place-items-center rounded-md", provider === "tokens" ? "bg-app-primary/10 text-app-primary" : "bg-app-info/10 text-app-info")}><Icon aria-hidden="true" className="size-3.5" strokeWidth={1.7} /></span>
+        <h2 className="text-sm font-semibold">{title}</h2>
       </div>
-      <Button asChild size="sm" variant="ghost" className="text-app-subtle"><Link to={`/${provider}`}>管理账号<ArrowUpRight aria-hidden="true" className="size-3.5" /></Link></Button>
+      <Button asChild size="sm" variant="ghost" className="!h-6 gap-1 !px-2 !text-xs text-app-subtle"><Link to={`/${provider}`}>管理账号<ArrowUpRight aria-hidden="true" className="size-[13px]" /></Link></Button>
     </div>
-    <div className="relative mx-3 mb-3 grid grid-cols-3 rounded-lg bg-app-muted/50 px-2 py-4 sm:mx-4 sm:mb-4">
-      {metrics.map((metric) => <Link key={metric.key} to={metric.to} aria-label={`${title} · ${metric.label} ${summary[metric.key]}`} className="group rounded-lg px-2 py-2 transition-colors hover:bg-app-surface focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-app-ring sm:px-3">
+    <div className="grid grid-cols-3 divide-x divide-app-border/60 border-t border-app-border/60">
+      {metrics.map((metric) => <Link key={metric.key} to={metric.to} aria-label={`${title} · ${metric.label} ${summary[metric.key]}`} className="min-w-0 px-3 py-2.5 transition-colors hover:bg-app-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-app-ring">
         <span className="block text-xs text-app-subtle">{metric.label}</span>
-        <strong className={cn("mt-2.5 block text-[30px] font-semibold leading-none tracking-tight tabular-nums sm:text-[34px]", metric.key === "enabled" && "text-app-success", metric.key === "disabled" && "text-app-subtle")}>{summary[metric.key].toLocaleString("zh-CN")}</strong>
+        <strong className={cn("mt-0.5 block break-all text-[22px] font-semibold leading-7 tracking-tight tabular-nums", metric.key === "enabled" && "text-app-success", metric.key === "disabled" && "text-app-subtle")}>{summary[metric.key].toLocaleString("zh-CN")}</strong>
       </Link>)}
     </div>
   </Card>;
@@ -74,30 +73,32 @@ export function OverviewPage() {
   }, [load]);
 
   return <>
-    <PageHeader title="账号总览" description="查看账号数量与变化趋势。" actions={<Button size="sm" disabled={refreshing} onClick={() => void load()}><RefreshCw aria-hidden="true" className={cn("size-3.5", refreshing && "animate-spin motion-reduce:animate-none")} />{refreshing ? "更新中…" : "刷新数据"}</Button>} />
-    <div className="mb-4 text-[11px] text-app-subtle">
-      <div aria-live="polite">
-        {error && <p role="alert" className="text-app-danger">更新失败：{error}{data ? "，当前展示上次读取的数据。" : "，请重试。"}</p>}
-        <p>{data ? `更新于 ${timeFormatter.format(data.as_of)}` : "正在获取数据…"}</p>
+    <header className="mb-3 flex flex-wrap items-end justify-between gap-x-3 gap-y-2">
+      <div className="min-w-0">
+        <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+          <h1 className="text-xl font-semibold tracking-tight">账号总览</h1>
+          <p aria-live="polite" className="text-[11px] text-app-subtle">{data ? `更新于 ${timeFormatter.format(data.as_of)}` : error && !refreshing ? "尚未获取数据" : "正在获取数据…"}</p>
+        </div>
+        <p className="mt-1 text-sm text-app-subtle">查看 GPT 与即梦账号统计及变化趋势</p>
       </div>
-    </div>
-    {data ? <div className="grid items-start gap-4 lg:grid-cols-2">
+      <Button disabled={refreshing} onClick={() => void load()}><RefreshCw aria-hidden="true" className={cn("size-[13px]", refreshing && "animate-spin motion-reduce:animate-none")} />{refreshing ? "更新中…" : "刷新数据"}</Button>
+    </header>
+    {error && <p role="alert" className="mb-3 rounded-md border border-app-danger/20 bg-app-danger/5 px-3 py-2 text-xs text-app-danger">更新失败：{error}{data ? "，当前展示上次读取的数据。" : "，请重试。"}</p>}
+    {data ? <div className="grid items-start gap-3 lg:grid-cols-2">
       <ProviderSummary provider="tokens" summary={data.tokens} />
       <ProviderSummary provider="dreamina" summary={data.dreamina} />
-    </div> : refreshing ? <Card className="grid min-h-48 place-items-center"><Spinner label="加载账号总览" /></Card> : <Card className="p-8 text-center text-sm text-app-subtle">暂时无法读取总览，请点击刷新重试。</Card>}
-    <Card className="mt-5 !rounded-xl p-4 shadow-sm shadow-black/[0.025] sm:p-6">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+    </div> : refreshing || !error ? <Card className="grid min-h-32 place-items-center"><Spinner label="加载账号总览" /></Card> : <Card className="grid min-h-32 place-items-center p-4 text-center text-sm text-app-subtle">暂时无法读取总览，请点击刷新重试。</Card>}
+    <Card className="mt-3 p-3 sm:p-4">
+      <div className="mb-2.5 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <h2 className="inline-flex items-center gap-2 font-semibold"><Activity aria-hidden="true" className="size-4 text-app-primary" />实时数量变化</h2>
-          <p className="mt-1 text-[11px] text-app-subtle">仅本次查看期间，刷新或离开页面后重新记录</p>
+          <h2 className="inline-flex items-center gap-1.5 text-sm font-semibold"><Activity aria-hidden="true" className="size-[13px] text-app-primary" />实时数量变化</h2>
+          <p className="mt-0.5 text-[10px] text-app-subtle">本次查看记录，重载后重置</p>
         </div>
-        <div className="flex flex-wrap items-center gap-3">
-          <div role="group" aria-label="趋势账号类型" className="inline-flex rounded-lg bg-app-muted p-1">
-            {([{ value: "tokens", label: "GPT" }, { value: "dreamina", label: "即梦" }] as const).map((option) => <Button key={option.value} size="sm" variant="ghost" aria-pressed={provider === option.value} onClick={() => setProvider(option.value)} className={cn("min-w-14", provider === option.value ? "bg-app-surface text-app-primary shadow-sm" : "text-app-subtle")}>{option.label}</Button>)}
-          </div>
+        <div role="group" aria-label="趋势账号类型" className="inline-flex gap-0.5 rounded-md bg-app-muted p-0.5">
+          {([{ value: "tokens", label: "GPT" }, { value: "dreamina", label: "即梦" }] as const).map((option) => <Button key={option.value} size="sm" variant="ghost" aria-pressed={provider === option.value} onClick={() => setProvider(option.value)} className={cn("!h-6 min-w-11 !rounded !border-0 !px-2 !text-xs", provider === option.value ? "!bg-app-surface !text-app-primary shadow-sm" : "text-app-subtle")}>{option.label}</Button>)}
         </div>
       </div>
-      {samples.length > 0 ? <TrendChart samples={samples} provider={provider} /> : refreshing ? <div className="grid h-72 place-items-center"><Spinner label="加载数量变化" /></div> : <div className="grid h-72 place-items-center text-sm text-app-subtle">暂无记录，请刷新重试。</div>}
+      {samples.length > 0 ? <TrendChart samples={samples} provider={provider} /> : refreshing || !error ? <div className="grid h-44 place-items-center sm:h-52"><Spinner label="加载数量变化" /></div> : <div className="grid h-44 place-items-center text-sm text-app-subtle sm:h-52">暂无记录，请刷新重试。</div>}
     </Card>
   </>;
 }

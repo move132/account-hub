@@ -242,7 +242,7 @@ export function TokensPage() {
     </Dialog>}>
       <TokenContentDialog key={content.id} tokenId={content.id} label={content.email || content.name || "未命名账号"} onClose={() => setContent(null)} />
     </Suspense> : null}
-    <PageHeader title="GPT账号" description={`共 ${total} 个账号凭据`} actions={<>
+    <PageHeader title="GPT账号" description={`管理账号凭据、检查与刷新 · 共 ${total} 个账号`} actions={<>
       <Button onClick={() => setImportOpen(true)}>批量导入</Button>
       <Button disabled={selected.size === 0 || exporting} onClick={() => void exportSelected()}>{exporting ? "导出中…" : "导出选中"}</Button>
       <Button variant="primary" onClick={openCreate}>新增账号</Button>

@@ -237,7 +237,7 @@ export function DreaminaPage() {
     },
   ], [load]);
   return <>
-    <PageHeader title="即梦账号" description={`共 ${total} 个账号`} actions={<>
+    <PageHeader title="即梦账号" description={`管理 Session、积分与历史作品 · 共 ${total} 个账号`} actions={<>
       <Button onClick={() => setImportOpen(true)}>批量导入</Button>
       <Button disabled={exporting} onClick={() => void exportData()}>{exporting ? "导出中…" : "导出启用 Session"}</Button>
       <Button variant="primary" onClick={openCreate}>新增账号</Button>
