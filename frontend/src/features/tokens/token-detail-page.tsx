@@ -1,5 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
 import HardDrive from "lucide-react/dist/esm/icons/hard-drive.mjs";
 import { Badge, Button, Card, CardHeader, Dialog, PageHeader, Spinner, useToast } from "../../components/ui";
 import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
@@ -63,10 +64,11 @@ export function TokenDetailPage() {
     </Dialog>}>
       <TokenContentDialog key={id} tokenId={id} label={item.email || item.name || "未命名账号"} onClose={() => setContentOpen(false)} />
     </Suspense> : null}
-    <PageHeader title={item.email || item.name || "Token 详情"} description={item.id} actions={<>
-      <Button asChild>
-        <Link to="/tokens">返回列表</Link>
+    <PageHeader title={item.email || item.name || "Token 详情"} description={item.id} leading={
+      <Button asChild variant="ghost" className="w-9 shrink-0 bg-app-hover! px-0! text-app-subtle hover:text-app-foreground">
+        <Link to="/tokens" aria-label="返回列表" title="返回列表"><ArrowLeft aria-hidden="true" className="size-4" /></Link>
       </Button>
+    } actions={<>
       <Button onClick={() => void run("checks")}>检查</Button>
       <Button variant="primary" disabled={!item.has_session_token} onClick={() => void run("refreshes")}>刷新</Button>
     </>} />

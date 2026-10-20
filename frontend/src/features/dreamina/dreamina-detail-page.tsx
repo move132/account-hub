@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import ArrowLeft from "lucide-react/dist/esm/icons/arrow-left.mjs";
 import { Badge, Button, Card, CardHeader, ConfirmDialog, PageHeader, Spinner, useToast } from "../../components/ui";
 import { api, createRequestId, errorMessage, jsonBody } from "../../lib/api";
 import { accountStatusLabel, checkStateLabel, operationLabel, resultStatusLabel } from "../../lib/status-labels";
@@ -102,10 +103,11 @@ export function DreaminaDetailPage() {
   if (!item)
     return <Card className="p-8">即梦账号不存在</Card>;
   return <>
-    <PageHeader title={item.email} description={item.id} actions={<>
-      <Button asChild>
-        <Link to="/dreamina">返回列表</Link>
+    <PageHeader title={item.email} description={item.id} leading={
+      <Button asChild variant="ghost" className="w-9 shrink-0 bg-app-hover! px-0! text-app-subtle hover:text-app-foreground">
+        <Link to="/dreamina" aria-label="返回列表" title="返回列表"><ArrowLeft aria-hidden="true" className="size-4" /></Link>
       </Button>
+    } actions={<>
       <Button disabled={!item.has_session_id} onClick={() => void run("checks")}>检查</Button>
       <Button variant="primary" onClick={() => void run("refreshes")}>刷新 Session</Button>
     </>} />

@@ -39,17 +39,21 @@ export function EmptyState({ title = "暂无数据", description }: {
         {description}</p>}</div>
   </div>;
 }
-export function PageHeader({ title, description, actions }: {
+export function PageHeader({ title, description, leading, actions }: {
   title: string;
   description?: string;
+  leading?: ReactNode;
   actions?: ReactNode;
 }) {
   return <div className="mb-4 flex flex-wrap items-end justify-between gap-3">
-    <div className="min-w-0">
-      <h1 className="text-balance text-xl font-semibold tracking-tight">
-        {title}</h1>
-      {description && <p className="mt-1 break-words text-sm text-app-subtle">
-        {description}</p>}</div>
+    <div className="flex min-w-0 max-w-full items-center gap-3">
+      {leading}
+      <div className="min-w-0">
+        <h1 className="break-words text-balance text-xl font-semibold tracking-tight">
+          {title}</h1>
+        {description && <p className="mt-1 break-words text-sm text-app-subtle">
+          {description}</p>}</div>
+    </div>
     <div className="flex flex-wrap gap-2">
       {actions}</div>
   </div>;
