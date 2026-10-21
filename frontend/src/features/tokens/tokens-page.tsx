@@ -18,6 +18,7 @@ interface PageData extends Record<string, unknown> {
   total: number;
   total_pages: number;
 }
+type BatchConfirmAction = "check" | "refresh";
 const emptyForm = { name: "", email: "", access_token: "", session_token: "", status: "enabled", note: "" };
 export function TokensPage() {
   const [params, setParams] = useSearchParams();
@@ -33,6 +34,7 @@ export function TokensPage() {
   const [deleting, setDeleting] = useState<TokenView | null>(null);
   const [content, setContent] = useState<TokenView | null>(null);
   const [batchDeleteOpen, setBatchDeleteOpen] = useState(false);
+  const [batchConfirmAction, setBatchConfirmAction] = useState<BatchConfirmAction | null>(null);
   const [importOpen, setImportOpen] = useState(false);
   const [importJob, setImportJob] = useState<{ id: string; skipped: number } | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -172,6 +174,13 @@ export function TokensPage() {
     }
   };
   const batchDelete = async () => { await batch("delete"); setBatchDeleteOpen(false); };
+  const confirmBatchAction = async () => {
+    if (!batchConfirmAction)
+      return;
+    const actionName = batchConfirmAction;
+    setBatchConfirmAction(null);
+    await batch(actionName);
+  };
   const exportSelected = async () => {
     if (selected.size === 0) return;
     const count = selected.size;
@@ -255,8 +264,8 @@ export function TokensPage() {
         </div>
         <div className={cn("flex h-8 max-w-[min(58vw,34rem)] items-center gap-1.5 overflow-x-auto whitespace-nowrap", selected.size === 0 && "invisible pointer-events-none")}>
           <span className="text-xs text-app-subtle">已选 {selected.size} 项</span>
-          <Button size="sm" onClick={() => void batch("check")}>批量检查</Button>
-          <Button size="sm" onClick={() => void batch("refresh")}>批量刷新</Button>
+          <Button size="sm" onClick={() => setBatchConfirmAction("check")}>批量检查</Button>
+          <Button size="sm" onClick={() => setBatchConfirmAction("refresh")}>批量刷新</Button>
           <Button size="sm" onClick={() => void batch("enable")}>启用</Button>
           <Button size="sm" onClick={() => void batch("disable")}>禁用</Button>
           <Button size="sm" variant="danger" onClick={() => setBatchDeleteOpen(true)}>删除</Button>
@@ -296,6 +305,7 @@ export function TokensPage() {
       </form>
     </Dialog>
     <ConfirmDialog open={Boolean(deleting)} onOpenChange={(open) => !open && setDeleting(null)} title="删除 Token" description={`确定删除 ${deleting?.email || deleting?.name || "该 Token"}？凭据将立即删除。`} confirmLabel="删除" danger onConfirm={() => void remove()} />
+    <ConfirmDialog open={Boolean(batchConfirmAction)} onOpenChange={(open) => !open && setBatchConfirmAction(null)} title={batchConfirmAction === "check" ? "批量检查 GPT 账号" : "批量刷新 GPT 账号"} description={`确定对选中的 ${selected.size} 项执行${batchConfirmAction === "check" ? "批量检查" : "批量刷新"}吗？该操作由后台任务执行。`} confirmLabel={batchConfirmAction === "check" ? "创建检查任务" : "创建刷新任务"} onConfirm={() => void confirmBatchAction()} />
     <ConfirmDialog open={batchDeleteOpen} onOpenChange={setBatchDeleteOpen} title="批量删除 Token" description={`确定删除选中的 ${selected.size} 项吗？该操作由后台任务执行。`} confirmLabel="创建删除任务" danger onConfirm={() => void batchDelete()} />
   </>;
 }
